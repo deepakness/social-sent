@@ -17,21 +17,32 @@ import { requireScope, requireUser } from '$lib/server/require';
 
 export const POST: RequestHandler = async ({ params, locals }) => {
 	const { id } = params;
+	// Authorisation and ownership are settled before any write: a 401/403 from
+	// these gates is a credentials problem, never a provider auth failure, and
+	// must not reach the expiry write at the bottom of this handler.
+	let conn: typeof connections.$inferSelect | undefined;
 	try {
 		const user = requireUser(locals.user);
 		requireScope(locals, 'write');
-		const conn = await first(
+		conn = await first(
 			locals.db
 				.select()
 				.from(connections)
 				.where(and(eq(connections.id, id), eq(connections.userId, user.id)))
 		);
-		if (!conn) return fail('Not found', 404);
-		// Tombstoned rows are archive-only: credentials are wiped, so a
-		// verify must go through a fresh connect (which revives the row).
-		if (conn.status === 'disconnected') {
-			return fail('Account disconnected — reconnect to verify', 409);
-		}
+	} catch (err) {
+		return handleError(err);
+	}
+	if (!conn) return fail('Not found', 404);
+	// Tombstoned rows are archive-only: credentials are wiped, so a
+	// verify must go through a fresh connect (which revives the row).
+	if (conn.status === 'disconnected') {
+		return fail('Account disconnected — reconnect to verify', 409);
+	}
+	// Ownership is proven above, so every write carries the owner filter too.
+	const owned = and(eq(connections.id, id), eq(connections.userId, conn.userId));
+
+	try {
 		const creds = await decryptJson<ConnectionCredentials>(
 			conn.credentialsEncrypted,
 			locals.env.APP_ENCRYPTION_KEY
@@ -56,7 +67,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 					),
 					updatedAt: new Date()
 				})
-				.where(eq(connections.id, id));
+				.where(owned);
 		} else if (conn.platform === 'linkedin') {
 			// Try a refresh first: expired-but-refreshable tokens verify without
 			// forcing a manual reconnect. Auth rejection expires the row;
@@ -74,14 +85,14 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 								credentialsEncrypted: await encryptJson(refreshed, locals.env.APP_ENCRYPTION_KEY),
 								updatedAt: new Date()
 							})
-							.where(eq(connections.id, id));
+							.where(owned);
 					}
 				} catch (err) {
 					if ((err as { status?: number } | null)?.status === 401) {
 						await locals.db
 							.update(connections)
 							.set({ status: 'expired', updatedAt: new Date() })
-							.where(eq(connections.id, id));
+							.where(owned);
 						return fail('Token expired — reconnect', 401);
 					}
 				}
@@ -96,7 +107,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 					handle: info.handle || conn.handle,
 					updatedAt: new Date()
 				})
-				.where(eq(connections.id, id));
+				.where(owned);
 		} else if (conn.platform === 'threads') {
 			let checkCreds = creds;
 			const refresher = getProvider('threads').refreshIfNeeded;
@@ -111,14 +122,14 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 								credentialsEncrypted: await encryptJson(refreshed, locals.env.APP_ENCRYPTION_KEY),
 								updatedAt: new Date()
 							})
-							.where(eq(connections.id, id));
+							.where(owned);
 					}
 				} catch (err) {
 					if ((err as { status?: number } | null)?.status === 401) {
 						await locals.db
 							.update(connections)
 							.set({ status: 'expired', updatedAt: new Date() })
-							.where(eq(connections.id, id));
+							.where(owned);
 						return fail('Token expired — reconnect', 401);
 					}
 				}
@@ -157,7 +168,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 						: {}),
 					updatedAt: new Date()
 				})
-				.where(eq(connections.id, id));
+				.where(owned);
 		} else if (conn.platform === 'x') {
 			let checkCreds = creds;
 			const refresher = getProvider('x').refreshIfNeeded;
@@ -172,14 +183,14 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 								credentialsEncrypted: await encryptJson(refreshed, locals.env.APP_ENCRYPTION_KEY),
 								updatedAt: new Date()
 							})
-							.where(eq(connections.id, id));
+							.where(owned);
 					}
 				} catch (err) {
 					if ((err as { status?: number } | null)?.status === 401) {
 						await locals.db
 							.update(connections)
 							.set({ status: 'expired', updatedAt: new Date() })
-							.where(eq(connections.id, id));
+							.where(owned);
 						return fail('Token expired — reconnect', 401);
 					}
 				}
@@ -208,7 +219,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 						: {}),
 					updatedAt: new Date()
 				})
-				.where(eq(connections.id, id));
+				.where(owned);
 		} else if (conn.platform === 'mastodon' && creds.instanceUrl && creds.accessToken) {
 			// Re-normalize + re-block stored instances (fail closed on poisoned rows).
 			const instanceUrl = sanitizeMastodonInstanceUrl(creds.instanceUrl);
@@ -219,7 +230,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 				await locals.db
 					.update(connections)
 					.set({ status: 'expired', updatedAt: new Date() })
-					.where(eq(connections.id, id));
+					.where(owned);
 				return fail('Mastodon token expired — reconnect', 401);
 			}
 			if (!res.ok) {
@@ -230,7 +241,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 			await locals.db
 				.update(connections)
 				.set({ status: 'active', updatedAt: new Date() })
-				.where(eq(connections.id, id));
+				.where(owned);
 		}
 		return ok({ ok: true, status: 'active' });
 	} catch (err) {
@@ -242,7 +253,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 			await locals.db
 				.update(connections)
 				.set({ status: 'expired', updatedAt: new Date() })
-				.where(eq(connections.id, id));
+				.where(owned);
 		}
 		return handleError(err);
 	}
