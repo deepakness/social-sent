@@ -8,6 +8,8 @@
 	import SocialIcon from '$lib/components/SocialIcon.svelte';
 	import { accountLabel, displayHost, platformName, platformRank } from '$lib/domain/platforms';
 	import { humanizeError } from '$lib/domain/human-error';
+	import { sessionExpiredIfUnauthorized } from '$lib/components/session-expired';
+	import { dialogFocus } from '$lib/components/dialog-focus';
 
 	type Connection = {
 		id: string;
@@ -34,27 +36,15 @@
 	// First-load flag: while true show skeleton rows instead of the
 	// "No accounts yet" empty state (avoids flash on every visit).
 	let initialLoading = $state(true);
+	// Distinguishes "the list is empty" from "the list never arrived": the
+	// former gets the connect prompt, the latter must not.
+	let loadFailed = $state(false);
 	let verifying = $state<string | null>(null);
 	let pendingDisconnect = $state<{ id: string; label: string } | null>(null);
 	let disconnectBusy = $state(false);
 	let showConnectDialog = $state(false);
 	let modalForm = $state<'none' | 'bluesky' | 'mastodon'>('none');
 	let connectCloseBtn: HTMLButtonElement | null = $state(null);
-
-	$effect(() => {
-		if (showConnectDialog) {
-			const previouslyFocused = document.activeElement as HTMLElement | null;
-			connectCloseBtn?.focus();
-			const onKey = (e: KeyboardEvent) => {
-				if (e.key === 'Escape') showConnectDialog = false;
-			};
-			window.addEventListener('keydown', onKey);
-			return () => {
-				window.removeEventListener('keydown', onKey);
-				previouslyFocused?.focus?.();
-			};
-		}
-	});
 
 	const availablePlatforms = [
 		{
@@ -91,10 +81,16 @@
 
 	async function load() {
 		initialLoading = true;
+		loadFailed = false;
 		try {
 			const res = await fetch('/api/connections');
+			if (sessionExpiredIfUnauthorized(res)) {
+				loadFailed = true;
+				return;
+			}
 			const payload = await res.json().catch(() => ({}));
 			if (!res.ok) {
+				loadFailed = true;
 				err = humanizeError(payload.error || 'Could not load accounts');
 				return;
 			}
@@ -108,6 +104,9 @@
 					x: payload.configured.x !== false
 				};
 			}
+		} catch (e) {
+			loadFailed = true;
+			err = humanizeError(e instanceof Error ? e.message : 'Could not load accounts');
 		} finally {
 			initialLoading = false;
 		}
@@ -308,6 +307,10 @@
 					</div>
 				{/each}
 			</div>
+		{:else if loadFailed && connections.length === 0}
+			<p class="p-6 text-sm font-medium text-stone-500">
+				Accounts could not be loaded. The message above says why — retry in a moment.
+			</p>
 		{:else if connections.length === 0}
 			<p class="p-6 text-sm font-medium text-stone-500">
 				No accounts yet. Connect Bluesky, Mastodon, LinkedIn, Threads, or X to start posting.
@@ -352,7 +355,7 @@
 					<div class="mt-2 flex items-center justify-between gap-3 sm:mt-0 sm:justify-end">
 						{#if needsReconnect}
 							<span
-								class="rounded bg-amber-50 px-2 py-0.5 text-[10px] font-bold tracking-widest text-amber-600 uppercase"
+								class="rounded bg-amber-50 px-2 py-0.5 text-[10px] font-bold tracking-widest text-amber-700 uppercase"
 							>
 								{account.status}
 							</span>
@@ -371,7 +374,7 @@
 							>
 						{:else}
 							<span
-								class="rounded bg-emerald-50 px-2 py-0.5 text-[10px] font-bold tracking-widest text-emerald-600 uppercase shadow-sm"
+								class="rounded bg-emerald-50 px-2 py-0.5 text-[10px] font-bold tracking-widest text-emerald-700 uppercase shadow-sm"
 							>
 								Connected
 							</span>
@@ -416,6 +419,11 @@
 			aria-labelledby="connect-dialog-title"
 			class="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-[2rem] border border-stone-200/80 bg-white p-6 shadow-[0_16px_40px_-12px_rgb(28_25_23/0.15)] sm:p-8"
 			transition:fly={{ y: 20, duration: 250, opacity: 0 }}
+			use:dialogFocus={{
+				onEscape: () => {
+					if (!loading) showConnectDialog = false;
+				}
+			}}
 		>
 			<div class="mb-8 flex items-start justify-between">
 				<div>

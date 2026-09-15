@@ -14,6 +14,10 @@
 	import { fly } from 'svelte/transition';
 	import favicon from '$lib/assets/favicon.svg';
 	import faviconDark from '$lib/assets/favicon-dark.svg';
+	import { menuNav } from '$lib/components/menu-nav';
+
+	let workspaceTrigger: HTMLButtonElement | null = $state(null);
+	let profileTrigger: HTMLButtonElement | null = $state(null);
 
 	let { children, data } = $props();
 
@@ -88,6 +92,7 @@
 				<button
 					type="button"
 					class="group flex items-center gap-3 rounded-full border border-stone-200/80 bg-white px-2.5 py-2 shadow-[0_4px_20px_-8px_rgb(28_25_23/0.08)] transition-all hover:border-stone-300 hover:shadow-[0_4px_24px_-8px_rgb(28_25_23/0.12)] focus:outline-none"
+					bind:this={workspaceTrigger}
 					onclick={() => (showWorkspaceDropdown = !showWorkspaceDropdown)}
 					aria-haspopup="menu"
 					aria-expanded={showWorkspaceDropdown}
@@ -117,6 +122,10 @@
 						class="absolute top-14 left-0 z-50 w-56 origin-top-left rounded-[1.5rem] border border-stone-200/80 bg-white p-2 shadow-[0_16px_40px_-12px_rgb(28_25_23/0.15)]"
 						transition:fly={{ y: -5, duration: 200, opacity: 0 }}
 						role="menu"
+						use:menuNav={{
+							trigger: workspaceTrigger,
+							onEscape: () => (showWorkspaceDropdown = false)
+						}}
 					>
 						<a
 							href="/compose"
@@ -199,6 +208,7 @@
 						onclick={() => (showProfileDropdown = !showProfileDropdown)}
 						aria-haspopup="menu"
 						aria-expanded={showProfileDropdown}
+						bind:this={profileTrigger}
 						aria-controls="profile-menu"
 						aria-label="Profile menu"
 						title={userEmail}
@@ -221,6 +231,10 @@
 							transition:fly={{ y: -5, duration: 200, opacity: 0 }}
 							role="menu"
 							aria-label="Profile"
+							use:menuNav={{
+								trigger: profileTrigger,
+								onEscape: () => (showProfileDropdown = false)
+							}}
 						>
 							<div class="mb-1 border-b border-stone-100 px-3 py-3">
 								{#if displayName?.trim()}

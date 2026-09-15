@@ -5,6 +5,7 @@
 	import AccountAvatar from '$lib/components/AccountAvatar.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import { humanizeError } from '$lib/domain/human-error';
+	import { sessionExpiredIfUnauthorized } from '$lib/components/session-expired';
 	import { accountLabel, displayHandle, platformRank } from '$lib/domain/platforms';
 	import { isValidProfilePictureUrl, PROFILE_PICTURE_URL_MAX } from '$lib/domain/profile-settings';
 
@@ -93,6 +94,11 @@
 				fetch('/api/connections'),
 				fetch('/api/key')
 			]);
+			// An expired session is not a broken setting: sign in again.
+			if ([totp, settings, conns, key].some((res) => sessionExpiredIfUnauthorized(res))) {
+				err = 'Your session expired — sign in again';
+				return;
+			}
 			if (totp.ok) {
 				const t = await totp.json();
 				totpOn = Boolean(t.enabled);
@@ -475,7 +481,7 @@
 						{prefsLoading ? 'Loading…' : 'Save Changes'}
 					</button>
 					{#if profileSaved}
-						<span class="text-xs font-bold text-emerald-600" role="status">{profileSaved}</span>
+						<span class="text-xs font-bold text-emerald-700" role="status">{profileSaved}</span>
 					{/if}
 				</div>
 			</form>
@@ -631,7 +637,7 @@
 						>
 					{/if}
 					{#if prefSaved}
-						<span class="text-[13px] font-bold text-emerald-600">{prefSaved}</span>
+						<span class="text-[13px] font-bold text-emerald-700">{prefSaved}</span>
 					{/if}
 				</div>
 			</form>
@@ -773,7 +779,7 @@
 					class="mb-5 flex items-center gap-3 rounded-xl border border-emerald-200/50 bg-emerald-50/50 p-3"
 				>
 					<div
-						class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600"
+						class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"
 					>
 						<svg
 							class="h-4 w-4"

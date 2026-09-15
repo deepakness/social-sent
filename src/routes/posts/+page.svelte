@@ -20,6 +20,8 @@
 	import { displayHandle, platformName, platformRank } from '$lib/domain/platforms';
 	import { draftExcerpt } from '$lib/domain/excerpt';
 	import { humanizeError } from '$lib/domain/human-error';
+	import { sessionExpiredIfUnauthorized } from '$lib/components/session-expired';
+	import { menuNav } from '$lib/components/menu-nav';
 	import {
 		formatFullLocalWithZone,
 		formatLocalDateTimeWithZone,
@@ -141,6 +143,7 @@
 	let accountFilter = $state<string | null>(null);
 	let duplicating = $state<string | null>(null);
 	let accountMenuOpen = $state(false);
+	let accountFilterTrigger: HTMLButtonElement | null = $state(null);
 	let accountMenuEl = $state<HTMLDivElement | null>(null);
 	let query = $state('');
 	let searchInput = $state<HTMLInputElement | null>(null);
@@ -150,6 +153,8 @@
 	// First-load flag: shows skeleton cards instead of flashing the empty
 	// state while /api/drafts + /api/queue are in flight.
 	let loading = $state(true);
+	// Distinguishes "there is nothing here" from "the list never arrived".
+	let loadFailed = $state(false);
 	let drafts = $state<Draft[]>([]);
 	let draftsHasMore = $state(false);
 	let queueHasMore = $state(false);
@@ -191,6 +196,13 @@
 		if (!opts.keepError) error = null;
 		try {
 			const [draftsRes, queueRes] = await Promise.all([fetch('/api/drafts'), fetch('/api/queue')]);
+			// An expired session is not a broken social account: sign in again
+			// rather than showing the reconnect copy.
+			if (sessionExpiredIfUnauthorized(draftsRes) || sessionExpiredIfUnauthorized(queueRes)) {
+				loadFailed = true;
+				return;
+			}
+			loadFailed = false;
 			const failed: string[] = [];
 			if (draftsRes.ok) {
 				const payload = await draftsRes.json().catch(() => ({}));
@@ -207,15 +219,13 @@
 				failed.push('queue');
 			}
 			if (failed.length) {
-				error = humanizeError(
-					draftsRes.status === 401 || queueRes.status === 401
-						? 'Unauthorized'
-						: 'Could not load posts'
-				);
+				loadFailed = true;
+				error = humanizeError('Could not load posts');
 			}
 		} catch (e) {
 			// fetch() rejects (offline, DNS) without a status: the checks above
 			// never run and the page used to look simply empty.
+			loadFailed = true;
 			error = humanizeError(e instanceof Error ? e.message : 'Could not load posts');
 		} finally {
 			loading = false;
@@ -576,6 +586,7 @@
 	function pickAccount(id: string | null) {
 		accountFilter = id;
 		accountMenuOpen = false;
+		accountFilterTrigger?.focus();
 	}
 
 	function clearSearch() {
@@ -588,8 +599,8 @@
 		if (accountMenuEl && !accountMenuEl.contains(event.target as Node)) accountMenuOpen = false;
 	}
 
-	function onWindowKeydown(event: KeyboardEvent) {
-		if (event.key === 'Escape') accountMenuOpen = false;
+	function onWindowKeydown() {
+		// Escape is handled by use:menuNav, which also restores focus.
 	}
 
 	/** Single bulk call for a whole card. The server returns per-id results; the
@@ -748,6 +759,7 @@
 				<div class="relative" bind:this={accountMenuEl}>
 					<button
 						type="button"
+						bind:this={accountFilterTrigger}
 						onclick={() => (accountMenuOpen = !accountMenuOpen)}
 						aria-haspopup="menu"
 						aria-expanded={accountMenuOpen}
@@ -774,6 +786,10 @@
 							class="absolute top-full left-0 z-30 mt-2 w-64 max-w-[calc(100vw-3rem)] origin-top-left rounded-[1.25rem] border border-stone-200/80 bg-white p-1.5 shadow-[0_16px_40px_-12px_rgb(28_25_23/0.15)] md:right-0 md:left-auto md:origin-top-right"
 							role="menu"
 							aria-label="Filter by account"
+							use:menuNav={{
+								trigger: accountFilterTrigger,
+								onEscape: () => (accountMenuOpen = false)
+							}}
 						>
 							<button
 								type="button"
@@ -975,13 +991,13 @@
 					<div class="flex items-center gap-3">
 						{#if badge === 'scheduled'}
 							<span
-								class="inline-flex items-center gap-1.5 rounded bg-sky-50 px-2.5 py-1 text-[10px] font-bold tracking-widest text-sky-600 uppercase"
+								class="inline-flex items-center gap-1.5 rounded bg-sky-50 px-2.5 py-1 text-[10px] font-bold tracking-widest text-sky-700 uppercase"
 							>
 								<CalendarClock class="h-3 w-3" /> Scheduled
 							</span>
 						{:else if badge === 'published'}
 							<span
-								class="inline-flex items-center gap-1.5 rounded bg-emerald-50 px-2.5 py-1 text-[10px] font-bold tracking-widest text-emerald-600 uppercase"
+								class="inline-flex items-center gap-1.5 rounded bg-emerald-50 px-2.5 py-1 text-[10px] font-bold tracking-widest text-emerald-700 uppercase"
 							>
 								<Send class="h-3 w-3" /> Published
 							</span>
@@ -1396,7 +1412,7 @@
 			</div>
 		{/each}
 
-		{#if !loading && visible.length === 0}
+		{#if !loading && !loadFailed && visible.length === 0}
 			<div
 				class="flex flex-col items-center justify-center rounded-[2rem] border border-dashed border-stone-200/80 bg-white px-4 py-20 text-center"
 			>

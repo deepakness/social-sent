@@ -337,7 +337,7 @@
 					{data.totals.published}
 				</p>
 				<p class="mt-1 text-[11px] font-bold tracking-widest text-stone-500 uppercase">Published</p>
-				<p class="mt-1 text-[11px] font-bold text-emerald-600">
+				<p class="mt-1 text-[11px] font-bold text-emerald-700">
 					{countDelta(data.totals.published, data.previous.published)}
 				</p>
 			</div>
@@ -419,7 +419,7 @@
 							<span class="inline-block h-2.5 w-2.5 rounded-[3px] bg-stone-900"></span>This period
 						</span>
 						<span class="flex items-center gap-1.5 text-[11px] font-bold text-stone-500">
-							<span class="inline-block h-2.5 w-2.5 rounded-[3px] bg-stone-200"></span>Previous
+							<span class="inline-block h-2.5 w-2.5 rounded-[3px] bg-stone-400"></span>Previous
 							period
 						</span>
 					{:else}
@@ -443,7 +443,7 @@
 							>
 								<div class="flex h-full items-end gap-0.5">
 									<div
-										class="min-w-0 flex-1 rounded-t-[3px] bg-stone-200"
+										class="min-w-0 flex-1 rounded-t-[3px] bg-stone-400"
 										style="height:{barHeight(previousBuckets[i]?.published ?? 0)}"
 									></div>
 									<div
