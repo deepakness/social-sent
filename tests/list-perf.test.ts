@@ -1,10 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createClient } from '@libsql/client';
-import { drizzle } from 'drizzle-orm/libsql';
-import * as schema from '$lib/server/db/schema';
 import {
 	connections,
 	draftMedia,
@@ -14,36 +8,10 @@ import {
 	users
 } from '$lib/server/db/schema';
 import { newId, type AppDb } from '$lib/server/db/client';
+import { createTestDb } from '$lib/server/db/test';
 import { GET as draftsGET } from '../src/routes/api/drafts/+server';
 import { GET as queueGET } from '../src/routes/api/queue/+server';
 import { GET as draftGET, PATCH as draftPATCH } from '../src/routes/api/drafts/[id]/+server';
-
-const here = dirname(fileURLToPath(import.meta.url));
-
-async function countedDb() {
-	const client = createClient({ url: ':memory:' });
-	const dir = join(here, '../drizzle');
-	for (const name of readdirSync(dir)
-		.filter((n) => n.endsWith('.sql'))
-		.sort()) {
-		await client.executeMultiple(readFileSync(join(dir, name), 'utf8'));
-	}
-	await client.execute('PRAGMA foreign_keys = ON');
-	let queries = 0;
-	const orig = client.execute.bind(client);
-	client.execute = (async (...args: Parameters<typeof orig>) => {
-		queries += 1;
-		return orig(...args);
-	}) as typeof orig;
-	// Batch calls bypass execute: count their statements so budgets stay honest.
-	const batchOrig = client.batch.bind(client) as (stmts: unknown[]) => Promise<unknown>;
-	(client as unknown as Record<string, unknown>).batch = (async (stmts: unknown[]) => {
-		queries += (stmts as unknown[]).length;
-		return batchOrig(stmts as never);
-	}) as typeof batchOrig;
-	const db = drizzle(client, { schema }) as unknown as AppDb;
-	return { db, close: () => client.close(), count: () => queries, reset: () => (queries = 0) };
-}
 
 describe('list endpoint query budgets', () => {
 	let db: AppDb;
@@ -59,7 +27,7 @@ describe('list endpoint query budgets', () => {
 	});
 
 	beforeAll(async () => {
-		const ctx = await countedDb();
+		const ctx = await createTestDb();
 		db = ctx.db;
 		close = ctx.close;
 		count = ctx.count;

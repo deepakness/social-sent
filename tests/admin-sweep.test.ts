@@ -1,35 +1,8 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createClient } from '@libsql/client';
-import { drizzle } from 'drizzle-orm/libsql';
-import * as schema from '$lib/server/db/schema';
 import { users } from '$lib/server/db/schema';
 import { ensureAdminUser } from '$lib/server/auth';
 import { newId, type AppDb } from '$lib/server/db/client';
-import { TEST_ENV } from '$lib/server/db/test';
-
-const here = dirname(fileURLToPath(import.meta.url));
-
-async function countedDb() {
-	const client = createClient({ url: ':memory:' });
-	const dir = join(here, '../drizzle');
-	for (const name of readdirSync(dir)
-		.filter((n) => n.endsWith('.sql'))
-		.sort()) {
-		await client.executeMultiple(readFileSync(join(dir, name), 'utf8'));
-	}
-	await client.execute('PRAGMA foreign_keys = ON');
-	let queries = 0;
-	const orig = client.execute.bind(client);
-	client.execute = (async (...args: Parameters<typeof orig>) => {
-		queries += 1;
-		return orig(...args);
-	}) as typeof orig;
-	const db = drizzle(client, { schema }) as unknown as AppDb;
-	return { db, close: () => client.close(), count: () => queries, reset: () => (queries = 0) };
-}
+import { TEST_ENV, createTestDb } from '$lib/server/db/test';
 
 async function orphan(db: AppDb) {
 	const now = new Date();
@@ -54,7 +27,7 @@ describe('ensureAdminUser sweep memoization', () => {
 	let count: () => number;
 
 	beforeAll(async () => {
-		const ctx = await countedDb();
+		const ctx = await createTestDb();
 		db = ctx.db;
 		close = ctx.close;
 		reset = ctx.reset;

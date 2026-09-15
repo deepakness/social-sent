@@ -20,7 +20,15 @@ export const TEST_ENV: AppEnv = {
 	skipTotp: false
 };
 
-export async function createTestDb(): Promise<{ db: AppDb; close: () => void }> {
+export interface TestDb {
+	db: AppDb;
+	close: () => void;
+	/** Statements executed so far — D1's per-invocation budget is counted, not timed. */
+	count: () => number;
+	reset: () => void;
+}
+
+export async function createTestDb(): Promise<TestDb> {
 	const client = createClient({ url: ':memory:' });
 	const dir = join(here, '../../../../drizzle');
 	const files = readdirSync(dir)
@@ -30,10 +38,24 @@ export async function createTestDb(): Promise<{ db: AppDb; close: () => void }> 
 		await client.executeMultiple(readFileSync(join(dir, file), 'utf8'));
 	}
 	await client.execute('PRAGMA foreign_keys = ON');
+	// Count like D1 does: a batch counts as its statements, not one round trip.
+	let queries = 0;
+	const orig = client.execute.bind(client);
+	client.execute = (async (...args: Parameters<typeof orig>) => {
+		queries += 1;
+		return orig(...args);
+	}) as typeof orig;
+	const batchOrig = client.batch.bind(client) as (stmts: unknown[]) => Promise<unknown>;
+	(client as unknown as Record<string, unknown>).batch = (async (stmts: unknown[]) => {
+		queries += (stmts as unknown[]).length;
+		return batchOrig(stmts as never);
+	}) as typeof batchOrig;
 	const db = drizzle(client, { schema }) as unknown as AppDb;
 	return {
 		db,
-		close: () => client.close()
+		close: () => client.close(),
+		count: () => queries,
+		reset: () => (queries = 0)
 	};
 }
 

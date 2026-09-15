@@ -1,29 +1,9 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createClient } from '@libsql/client';
-import { drizzle } from 'drizzle-orm/libsql';
 import { eq } from 'drizzle-orm';
-import * as schema from '$lib/server/db/schema';
 import { connections, drafts, publishTargets, users } from '$lib/server/db/schema';
 import { newId, type AppDb } from '$lib/server/db/client';
+import { createTestDb } from '$lib/server/db/test';
 import { POST as bulkPOST } from '../src/routes/api/targets/bulk/+server';
-
-const here = dirname(fileURLToPath(import.meta.url));
-
-async function testDb() {
-	const client = createClient({ url: ':memory:' });
-	const dir = join(here, '../drizzle');
-	for (const name of readdirSync(dir)
-		.filter((n) => n.endsWith('.sql'))
-		.sort()) {
-		await client.executeMultiple(readFileSync(join(dir, name), 'utf8'));
-	}
-	await client.execute('PRAGMA foreign_keys = ON');
-	const db = drizzle(client, { schema }) as unknown as AppDb;
-	return { db, close: () => client.close() };
-}
 
 describe('POST /api/targets/bulk', () => {
 	let db: AppDb;
@@ -52,7 +32,7 @@ describe('POST /api/targets/bulk', () => {
 		} as never) as Promise<Response>;
 
 	beforeAll(async () => {
-		const ctx = await testDb();
+		const ctx = await createTestDb();
 		db = ctx.db;
 		close = ctx.close;
 		const now = new Date();

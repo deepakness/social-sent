@@ -1,13 +1,8 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createClient } from '@libsql/client';
 import { eq } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/libsql';
-import * as schema from '$lib/server/db/schema';
 import { connections, drafts, publishTargets, users } from '$lib/server/db/schema';
 import { newId, type AppDb } from '$lib/server/db/client';
+import { createTestDb } from '$lib/server/db/test';
 import {
 	bucketKind,
 	buildInsightSeries,
@@ -21,34 +16,9 @@ import {
 } from '$lib/domain/insights';
 import { GET as insightsGET } from '../src/routes/api/insights/+server';
 
-const here = dirname(fileURLToPath(import.meta.url));
 const DAY = 86_400_000;
 /** Sep 11 2026, 21:00 JST — a time of day that is a different UTC date. */
 const NOW = Date.UTC(2026, 8, 11, 12, 0, 0);
-
-async function countedDb() {
-	const client = createClient({ url: ':memory:' });
-	const dir = join(here, '../drizzle');
-	for (const name of readdirSync(dir)
-		.filter((n) => n.endsWith('.sql'))
-		.sort()) {
-		await client.executeMultiple(readFileSync(join(dir, name), 'utf8'));
-	}
-	await client.execute('PRAGMA foreign_keys = ON');
-	let queries = 0;
-	const orig = client.execute.bind(client);
-	client.execute = (async (...args: Parameters<typeof orig>) => {
-		queries += 1;
-		return orig(...args);
-	}) as typeof orig;
-	const batchOrig = client.batch.bind(client) as (stmts: unknown[]) => Promise<unknown>;
-	(client as unknown as Record<string, unknown>).batch = (async (stmts: unknown[]) => {
-		queries += (stmts as unknown[]).length;
-		return batchOrig(stmts as never);
-	}) as typeof batchOrig;
-	const db = drizzle(client, { schema }) as unknown as AppDb;
-	return { db, close: () => client.close(), count: () => queries, reset: () => (queries = 0) };
-}
 
 describe('range helpers', () => {
 	it('accepts only the three shipped ranges', () => {
@@ -280,7 +250,7 @@ describe('GET /api/insights', () => {
 	}
 
 	beforeAll(async () => {
-		const harness = await countedDb();
+		const harness = await createTestDb();
 		db = harness.db;
 		close = harness.close;
 		count = harness.count;
@@ -481,7 +451,7 @@ describe('GET /api/insights', () => {
 	});
 
 	it('answers with zeros and no accounts on an empty database', async () => {
-		const empty = await countedDb();
+		const empty = await createTestDb();
 		try {
 			const res = await insightsGET({
 				locals: {

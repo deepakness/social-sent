@@ -14,40 +14,9 @@ import { GET as connectionsGET } from '../src/routes/api/connections/+server';
 import { POST as verifyPOST } from '../src/routes/api/connections/[id]/verify/+server';
 import { GET as queueGET } from '../src/routes/api/queue/+server';
 import { claimDueTargets, purgeDisconnectedConnections } from '$lib/server/scheduler';
-import { TEST_ENV } from '$lib/server/db/test';
+import { TEST_ENV, createTestDb } from '$lib/server/db/test';
 
 const here = dirname(fileURLToPath(import.meta.url));
-
-async function testDb() {
-	const client = createClient({ url: ':memory:' });
-	const dir = join(here, '../drizzle');
-	for (const name of readdirSync(dir)
-		.filter((n) => n.endsWith('.sql'))
-		.sort()) {
-		await client.executeMultiple(readFileSync(join(dir, name), 'utf8'));
-	}
-	await client.execute('PRAGMA foreign_keys = ON');
-	// Count statements like list-perf: D1's Free plan allows only 50 queries
-	// per Worker invocation, so a disconnect sweep must stay bounded.
-	let queries = 0;
-	const orig = client.execute.bind(client);
-	client.execute = (async (...args: Parameters<typeof orig>) => {
-		queries += 1;
-		return orig(...args);
-	}) as typeof orig;
-	const batchOrig = client.batch.bind(client) as (stmts: unknown[]) => Promise<unknown>;
-	(client as unknown as Record<string, unknown>).batch = (async (stmts: unknown[]) => {
-		queries += (stmts as unknown[]).length;
-		return batchOrig(stmts as never);
-	}) as typeof batchOrig;
-	const db = drizzle(client, { schema }) as unknown as AppDb;
-	return {
-		db,
-		close: () => client.close(),
-		count: () => queries,
-		reset: () => (queries = 0)
-	};
-}
 
 describe('DELETE /api/connections/[id] — archive, not destroy', () => {
 	let db: AppDb;
@@ -127,7 +96,7 @@ describe('DELETE /api/connections/[id] — archive, not destroy', () => {
 		disconnectDELETE({ params: { id }, locals: sessionUser(userId) } as never);
 
 	beforeAll(async () => {
-		const ctx = await testDb();
+		const ctx = await createTestDb();
 		db = ctx.db;
 		close = ctx.close;
 		count = ctx.count;

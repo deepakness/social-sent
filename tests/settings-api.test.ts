@@ -1,15 +1,8 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createClient } from '@libsql/client';
-import { drizzle } from 'drizzle-orm/libsql';
-import * as schema from '$lib/server/db/schema';
 import { users } from '$lib/server/db/schema';
 import { newId, type AppDb } from '$lib/server/db/client';
+import { createTestDb } from '$lib/server/db/test';
 import { GET as settingsGET, PATCH as settingsPATCH } from '../src/routes/api/settings/+server';
-
-const here = dirname(fileURLToPath(import.meta.url));
 
 describe('settings api', () => {
 	let db: AppDb;
@@ -21,16 +14,7 @@ describe('settings api', () => {
 	});
 
 	beforeAll(async () => {
-		const client = createClient({ url: ':memory:' });
-		const dir = join(here, '../drizzle');
-		for (const name of readdirSync(dir)
-			.filter((n) => n.endsWith('.sql'))
-			.sort()) {
-			await client.executeMultiple(readFileSync(join(dir, name), 'utf8'));
-		}
-		await client.execute('PRAGMA foreign_keys = ON');
-		db = drizzle(client, { schema }) as unknown as AppDb;
-		close = () => client.close();
+		({ db, close } = await createTestDb());
 		const now = new Date();
 		userId = newId();
 		await db.insert(users).values({
