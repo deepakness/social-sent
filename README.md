@@ -128,7 +128,7 @@ If you run your own instance while pulling updates from this repo, keep your ins
 Every npm script goes through `scripts/wrangler.mjs`, which passes `--config wrangler.personal.jsonc` automatically when that file exists, plus `--profile <name>` when `WRANGLER_PROFILE` is set:
 
 ```sh
-WRANGLER_PROFILE=personal npm run deploy
+WRANGLER_PROFILE=my-account npm run deploy
 ```
 
 Because your changes live in files upstream never touches, `git pull upstream main` stays conflict-free.

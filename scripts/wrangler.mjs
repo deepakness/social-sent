@@ -8,7 +8,7 @@
  *    name, your D1 `database_id`, your R2 bucket — so `wrangler.jsonc` in the
  *    repo can stay generic and upstream-friendly.
  * 2. Profile: when WRANGLER_PROFILE is set, `--profile` is added. Multi-account
- *    users pick an account with `WRANGLER_PROFILE=personal npm run deploy`
+ *    users pick an account with `WRANGLER_PROFILE=my-account npm run deploy`
  *    instead of the repo hardcoding a profile name.
  *
  * Explicit flags always win: passing `--config` or `--profile` yourself
