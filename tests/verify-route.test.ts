@@ -65,16 +65,14 @@ describe('POST /api/connections/[id]/verify — scope gate never writes', () => 
 		strangerId = newId();
 		const now = new Date();
 		for (const id of [ownerId, strangerId]) {
-			await db
-				.insert(users)
-				.values({
-					id,
-					email: `${id}@localhost`,
-					passwordHash: 'x',
-					timezone: 'UTC',
-					createdAt: now,
-					updatedAt: now
-				});
+			await db.insert(users).values({
+				id,
+				email: `${id}@localhost`,
+				passwordHash: 'x',
+				timezone: 'UTC',
+				createdAt: now,
+				updatedAt: now
+			});
 		}
 	});
 	afterAll(() => {
