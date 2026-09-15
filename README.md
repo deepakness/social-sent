@@ -101,7 +101,9 @@ curl -X POST "$APP_URL/api/internal/tick" \
 
 Both headers matter: the endpoint takes `SCHEDULER_SECRET` (`API_TOKEN` still works as a fallback; `AUTH_SECRET` never does — it signs sessions and is rejected on the wire), and `Content-Type: application/json` is required because SvelteKit's built-in CSRF guard rejects form-encoded POSTs without an `Origin` header (403) before app code ever runs. Clients that default to a form content type must override it.
 
-`SCHEDULER_SECRET` must be 32+ characters and lives in exactly two places — the Worker secret and the pinger config — so rotate both together. For the GitHub workflow, set repository secrets `APP_URL` and `SCHEDULER_SECRET`. That workflow is scheduled every minute, but GitHub throttles it to roughly one run every two hours, so treat it as a backup. Queue treats a heartbeat older than 6 hours as delayed. You can also run it manually from **Actions → Scheduler tick → Run workflow**.
+`SCHEDULER_SECRET` must be 32+ characters and lives in exactly two places — the Worker secret and the pinger config — so rotate both together. For the GitHub workflow, set repository secrets `APP_URL` and `SCHEDULER_SECRET`. That workflow is scheduled every five minutes (GitHub's shortest interval), but GitHub throttles it to roughly one run every two hours, so treat it as a backup. Queue treats a heartbeat older than 6 hours as delayed. You can also run it manually from **Actions → Scheduler tick → Run workflow**.
+
+A tick publishes as many due targets as it can inside D1's per-invocation statement budget (50 on the free plan, which is roughly three or four posts), then stops and leaves the rest due — the next tick picks them up. A backlog therefore drains a few posts per tick rather than all at once, and nothing is lost if a tick dies half-way.
 
 Never run two per-minute callers plus a Cloudflare cron together. Ticks are idempotent, so overlap is safe, but keep it to one pinger plus the throttled GitHub backup.
 
