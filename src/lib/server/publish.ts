@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { isLocalAppUrl } from '$lib/domain/app-url';
-import { STALE_CLAIM_MS } from '$lib/domain/due-jobs';
+import { LEASE_REFRESH_MS, STALE_CLAIM_MS } from '$lib/domain/due-jobs';
 import {
 	isThreadsAuthFailure,
 	isThreadsMediaFetchFailure,
@@ -365,7 +365,35 @@ export async function publishTarget(
 	// segment as it lands lets lastPartialResume pick up where it left off.
 	// Best effort: a checkpoint write must never fail a live publish, and
 	// markFailed overwrites the row with the authoritative partial summary.
+	// Claim lease. The reclaim path treats a row whose updatedAt is older than
+	// STALE_CLAIM_MS as dead, but only the claim ever wrote that timestamp: a
+	// slow publish (multi-segment thread, several large uploads) could outlive
+	// the window while still running, and an overlapping tick would then claim
+	// the same row and post it twice. Renew while this publish is alive.
+	// Throttled to LEASE_REFRESH_MS so a normal publish costs no extra writes.
+	let leaseAt = now.getTime();
+	const renewLease = async () => {
+		if (Date.now() - leaseAt < LEASE_REFRESH_MS) return;
+		try {
+			await db
+				.update(publishTargets)
+				.set({ updatedAt: new Date() })
+				.where(
+					and(
+						eq(publishTargets.id, targetId),
+						eq(publishTargets.status, 'publishing'),
+						eq(publishTargets.attemptCount, claimedGeneration)
+					)
+				);
+			leaseAt = Date.now();
+		} catch {
+			// Best effort: the success write is fenced on attemptCount, so a
+			// missed renewal can only cost a redundant reclaim later.
+		}
+	};
+
 	const checkpoint = async (state: PublishCheckpoint) => {
+		await renewLease();
 		try {
 			await db
 				.update(publishAttempts)
@@ -434,6 +462,9 @@ export async function publishTarget(
 		}
 
 		const resumeFrom = await lastPartialResume(db, targetId);
+		// The upload-heavy part of a publish lives inside provider.publish; make
+		// sure the lease is current before handing over to it.
+		await renewLease();
 		const result = await provider.publish(
 			content,
 			workingCreds,

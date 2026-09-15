@@ -1,5 +1,12 @@
 /** Dead-isolate TTL. Not a request timeout. Slow live publishes must finish under this. */
 export const STALE_CLAIM_MS = 15 * 60_000;
+/**
+ * How often a live publish refreshes its claim. Comfortably inside
+ * STALE_CLAIM_MS, so an overlapping tick can never reclaim a publish that is
+ * still running, while a genuinely slow one costs at most one extra write
+ * every five minutes.
+ */
+export const LEASE_REFRESH_MS = 5 * 60_000;
 
 export type SchedulableTarget = {
 	id: string;
@@ -48,6 +55,11 @@ export function selectDueScheduledTargets<T extends SchedulableTarget>(
 			if (updated == null) return false;
 			return updated <= now.getTime() - STALE_CLAIM_MS;
 		}
+		// `pending` with no timestamp is the "publish now" pair written by the
+		// publish and retry paths just before their inline attempt. If that
+		// attempt never ran (isolate evicted, request aborted, statement budget
+		// spent) the row would otherwise be stranded: nothing else reaches it.
+		if (t.status === 'pending' && when == null) return true;
 
 		if (!t.scheduledFor || when == null) return false;
 		return t.status === 'scheduled' || t.status === 'pending';

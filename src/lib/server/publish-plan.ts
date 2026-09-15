@@ -111,12 +111,21 @@ export async function classifyConnections(
 	conns: ConnectionRow[],
 	now: Date = new Date()
 ): Promise<Array<{ connectionId: string; kind: TargetClass; target: PublishTargetRow | null }>> {
-	const out = [];
-	for (const conn of conns) {
-		const winner = pickTargetWinner(await loadTargets(db, draftId, conn.id));
-		out.push({ connectionId: conn.id, kind: classifyWinner(winner, now), target: winner });
+	// One read for the whole draft instead of one per connection: this runs on
+	// every publish/schedule request, D1 counts statements, and the free plan
+	// only allows 50 per invocation — a ten-account publish must not spend ten
+	// of them before it starts publishing.
+	const rows = await db.select().from(publishTargets).where(eq(publishTargets.draftId, draftId));
+	const byConnection = new Map<string, PublishTargetRow[]>();
+	for (const row of rows) {
+		const list = byConnection.get(row.connectionId);
+		if (list) list.push(row);
+		else byConnection.set(row.connectionId, [row]);
 	}
-	return out;
+	return conns.map((conn) => {
+		const winner = pickTargetWinner(byConnection.get(conn.id) ?? []);
+		return { connectionId: conn.id, kind: classifyWinner(winner, now), target: winner };
+	});
 }
 
 function reusableWhere(id: string, now: Date) {

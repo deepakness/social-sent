@@ -1,5 +1,5 @@
 import type { RequestHandler } from './$types';
-import { and, desc, eq, inArray, type InferSelectModel } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql, type InferSelectModel } from 'drizzle-orm';
 import { connections, draftMedia, drafts, publishTargets } from '$lib/server/db/schema';
 import { batchQueries, chunkIds } from '$lib/server/db/client';
 import { handleError, ok } from '$lib/server/http';
@@ -44,7 +44,16 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 					])
 				)
 			)
-			.orderBy(publishTargets.scheduledFor, desc(publishTargets.updatedAt))
+			// Upcoming first. SQLite sorts NULLs ahead of values, so the old
+			// ascending order put every row with no schedule (manually
+			// published, pending, failed) before the posts that are actually
+			// due — a busy history then pushed future posts out of the window
+			// entirely. History still fills the rest, newest first.
+			.orderBy(
+				sql`${publishTargets.scheduledFor} is null`,
+				asc(publishTargets.scheduledFor),
+				desc(publishTargets.updatedAt)
+			)
 			.limit(limit + 1);
 
 		type TargetRow = InferSelectModel<typeof publishTargets>;

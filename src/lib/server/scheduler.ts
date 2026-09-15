@@ -317,6 +317,12 @@ export async function claimDueTargets(db: AppDb, now = new Date(), limit = TICK_
 						lte(publishTargets.scheduledFor, now),
 						inArray(publishTargets.status, ['scheduled', 'pending'])
 					),
+					// "Publish now" rows carry no timestamp: the publish and
+					// retry paths reset them to pending + NULL right before the
+					// inline attempt. If that attempt never ran (evicted
+					// isolate, aborted request, spent statement budget) nothing
+					// else can reach the row, so treat it as due now.
+					and(isNull(publishTargets.scheduledFor), eq(publishTargets.status, 'pending')),
 					and(eq(publishTargets.status, 'publishing'), lte(publishTargets.updatedAt, staleBefore))
 				)
 			)
@@ -369,7 +375,18 @@ export async function runSchedulerTick(
 					and(
 						eq(publishTargets.id, t.id),
 						isNull(publishTargets.remotePostId),
-						inArray(publishTargets.status, ['scheduled', 'pending']),
+						or(
+							inArray(publishTargets.status, ['scheduled', 'pending']),
+							// The scan also returns rows wedged in `publishing`
+							// past the stale window (a consumer that died
+							// mid-publish). They have to be handed off too:
+							// otherwise the CAS below matches nothing, the loop
+							// skips them, and the row stays `publishing` forever.
+							and(
+								eq(publishTargets.status, 'publishing'),
+								lte(publishTargets.updatedAt, staleBefore)
+							)
+						),
 						or(isNull(publishTargets.jobId), lte(publishTargets.updatedAt, staleBefore))
 					)
 				)
@@ -390,10 +407,22 @@ export async function runSchedulerTick(
 			results.push({ id: t.id, status: 'queued' });
 			continue;
 		}
-		const result = await publishTarget(db, env, opts.store, t.id, {
-			fetchImpl: opts.fetchImpl
-		});
-		results.push({ id: t.id, status: result.status });
+		try {
+			const result = await publishTarget(db, env, opts.store, t.id, {
+				fetchImpl: opts.fetchImpl
+			});
+			results.push({ id: t.id, status: result.status });
+		} catch (err) {
+			// Only infrastructure failures reach here: provider failures are
+			// handled inside publishTarget. The usual cause on the free plan is
+			// the 50-statements-per-invocation limit, and the next target would
+			// fail identically — so stop the batch instead of trying every
+			// remaining row. Nothing is lost: the untouched rows are still due
+			// and the next tick picks them up, and the digest below still runs.
+			console.error('[scheduler] publish aborted', t.id, err);
+			results.push({ id: t.id, status: 'error' });
+			break;
+		}
 	}
 	// After the publish pass so failures from this tick are included. No-op
 	// unless the digest env is configured.

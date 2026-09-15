@@ -1,5 +1,11 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createClient } from '@libsql/client';
 import { eq, inArray } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/libsql';
+import * as schema from '$lib/server/db/schema';
 import { encryptJson } from '$lib/server/crypto';
 import { newId, type AppDb } from '$lib/server/db/client';
 import { connections, drafts, publishTargets, users } from '$lib/server/db/schema';
@@ -11,6 +17,8 @@ import {
 	schedulerHealth,
 	writeHeartbeat
 } from '$lib/server/scheduler';
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 describe('claimDueTargets stale publishing', () => {
 	let db: AppDb;
@@ -138,6 +146,73 @@ describe('claimDueTargets stale publishing', () => {
 		expect(times).toEqual([...times].sort((a, b) => a - b));
 		// Cleanup so later tests see a quiet queue.
 		await db.delete(publishTargets).where(inArray(publishTargets.id, ids.slice(0, 100)));
+	});
+
+	it('keeps a publish-now row reachable when its inline attempt never ran', async () => {
+		const now = new Date();
+		const d = newId();
+		await db.insert(drafts).values({
+			id: d,
+			userId,
+			baseBody: 'publish now',
+			status: 'draft',
+			createdAt: now,
+			updatedAt: now
+		});
+		const targetId = newId();
+		await db.insert(publishTargets).values({
+			id: targetId,
+			draftId: d,
+			connectionId: connId,
+			status: 'pending',
+			scheduledFor: null,
+			attemptCount: 0,
+			createdAt: now,
+			updatedAt: now
+		});
+
+		const due = await claimDueTargets(db, now);
+		expect(due.map((t) => t.id)).toContain(targetId);
+		await db.delete(publishTargets).where(eq(publishTargets.id, targetId));
+	});
+
+	it('hands a stale publishing row to the queue instead of stranding it', async () => {
+		const now = new Date();
+		const d = newId();
+		await db.insert(drafts).values({
+			id: d,
+			userId,
+			baseBody: 'wedged publish',
+			status: 'scheduled',
+			createdAt: now,
+			updatedAt: now
+		});
+		const targetId = newId();
+		await db.insert(publishTargets).values({
+			id: targetId,
+			draftId: d,
+			connectionId: connId,
+			status: 'publishing',
+			scheduledFor: null,
+			attemptCount: 1,
+			createdAt: now,
+			// Past the stale window: the consumer that claimed it is gone.
+			updatedAt: new Date(now.getTime() - 16 * 60_000)
+		});
+		const sent: Array<{ targetId: string }> = [];
+		const tick = await runSchedulerTick(db, TEST_ENV, {
+			store: createTestMedia(),
+			queue: {
+				send: async (body) => {
+					sent.push(body);
+				}
+			}
+		});
+		expect(sent.some((s) => s.targetId === targetId)).toBe(true);
+		expect(tick.results.some((r) => r.id === targetId && r.status === 'queued')).toBe(true);
+		const [row] = await db.select().from(publishTargets).where(eq(publishTargets.id, targetId));
+		expect(row.jobId).toBeTruthy();
+		await db.delete(publishTargets).where(eq(publishTargets.id, targetId));
 	});
 
 	it('queue handoff does not trap the consumer claim', async () => {
@@ -355,5 +430,98 @@ describe('queue single-flight', () => {
 		await runSchedulerTick(db, TEST_ENV, { store, queue });
 		await runSchedulerTick(db, TEST_ENV, { store, queue });
 		expect(sent.filter((s) => s.targetId === 'singleflight-target')).toHaveLength(1);
+	});
+});
+
+/**
+ * D1's free plan allows 50 statements per invocation, and the tick spends
+ * roughly a dozen per target on top of its janitor pass. The batch used to
+ * throw out of the handler when it ran out, which also skipped the failure
+ * digest. It now stops cleanly and leaves the rest due for the next tick.
+ */
+describe('scheduler statement budget', () => {
+	let db: AppDb;
+	let close: () => void;
+	/** A real D1-shaped database that fails like an exhausted plan would. */
+	async function budgetDb(failOn: RegExp) {
+		const client = createClient({ url: ':memory:' });
+		const dir = join(here, '../drizzle');
+		for (const name of readdirSync(dir)
+			.filter((n) => n.endsWith('.sql'))
+			.sort()) {
+			await client.executeMultiple(readFileSync(join(dir, name), 'utf8'));
+		}
+		const orig = client.execute.bind(client);
+		client.execute = (async (...args: Parameters<typeof orig>) => {
+			const first = args[0] as unknown;
+			const text =
+				typeof first === 'string'
+					? first
+					: first && typeof first === 'object' && 'sql' in first
+						? String((first as { sql: unknown }).sql)
+						: '';
+			if (failOn.test(text)) throw new Error('D1_ERROR: too many queries per invocation');
+			return orig(...args);
+		}) as typeof orig;
+		return { db: drizzle(client, { schema }) as unknown as AppDb, close: () => client.close() };
+	}
+	beforeAll(async () => {
+		({ db, close } = await budgetDb(/publish_attempts/i));
+		const now = new Date();
+		const userId = newId();
+		await db.insert(users).values({
+			id: userId,
+			email: 'budget@localhost',
+			passwordHash: 'x',
+			timezone: 'UTC',
+			createdAt: now,
+			updatedAt: now
+		});
+		const connId = newId();
+		await db.insert(connections).values({
+			id: connId,
+			userId,
+			platform: 'bluesky',
+			handle: 'budget.bsky.social',
+			credentialsEncrypted: 'enc',
+			status: 'active',
+			createdAt: now,
+			updatedAt: now
+		});
+		for (let i = 0; i < 3; i++) {
+			const draftId = newId();
+			await db.insert(drafts).values({
+				id: draftId,
+				userId,
+				baseBody: `budget ${i}`,
+				status: 'scheduled',
+				createdAt: now,
+				updatedAt: now
+			});
+			await db.insert(publishTargets).values({
+				id: newId(),
+				draftId,
+				connectionId: connId,
+				status: 'scheduled',
+				scheduledFor: new Date(now.getTime() - 60_000),
+				attemptCount: 0,
+				createdAt: now,
+				updatedAt: now
+			});
+		}
+	});
+	afterAll(() => close());
+	it('reports the failure and leaves the rest of the batch due', async () => {
+		const store = createTestMedia();
+		// Must resolve rather than reject, and still run the digest pass.
+		const tick = await runSchedulerTick(db, TEST_ENV, {
+			store,
+			fetchImpl: async () => new Response('unmocked', { status: 404 })
+		});
+		expect(tick.results.some((r) => r.status === 'error')).toBe(true);
+		expect(tick.digest).toBeTruthy();
+		// The rows the batch never reached stay claimable on the next tick.
+		const due = await claimDueTargets(db, new Date());
+		expect(due.length).toBeGreaterThanOrEqual(1);
 	});
 });

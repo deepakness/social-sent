@@ -300,6 +300,10 @@ describe('ensureTargets', () => {
 		expect(row.target.id).toBe(scheduledId);
 		expect(row.target.status).toBe('pending');
 		expect(row.target.scheduledFor).toBeNull();
+		// The pending + NULL pair means "publish now": it must stay reachable
+		// by the scheduler, because the inline attempt that pair is written for
+		// can be cut short (evicted isolate, spent statement budget) and nothing
+		// else would ever pick the row up.
 		const due = selectDueScheduledTargets(
 			[
 				{
@@ -311,7 +315,7 @@ describe('ensureTargets', () => {
 			],
 			now
 		);
-		expect(due).toEqual([]);
+		expect(due.map((t) => t.id)).toEqual([row.target.id]);
 	});
 
 	it('does not clobber a fresh publishing row on a raced update', async () => {

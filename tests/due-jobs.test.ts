@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { STALE_CLAIM_MS, isFreshPublishing, selectDueScheduledTargets } from '$lib/domain/due-jobs';
+import {
+	LEASE_REFRESH_MS,
+	STALE_CLAIM_MS,
+	isFreshPublishing,
+	selectDueScheduledTargets
+} from '$lib/domain/due-jobs';
 
 describe('selectDueScheduledTargets', () => {
 	const now = new Date('2026-08-17T12:00:00Z');
@@ -79,6 +84,26 @@ describe('selectDueScheduledTargets', () => {
 			now
 		);
 		expect(due.map((t) => t.id)).toEqual(['stuck-now']);
+	});
+
+	it('treats pending with no schedule as due now', () => {
+		const due = selectDueScheduledTargets(
+			[
+				{ id: 'publish-now', status: 'pending', scheduledFor: null },
+				{ id: 'no-status', status: 'draft', scheduledFor: null },
+				{ id: 'published-now', status: 'pending', scheduledFor: null, remotePostId: 'at://done' },
+				{ id: 'future', status: 'scheduled', scheduledFor: new Date('2026-08-17T13:00:00Z') }
+			],
+			now
+		);
+		expect(due.map((t) => t.id)).toEqual(['publish-now']);
+	});
+
+	it('refreshes the lease at least twice inside the stale window', () => {
+		// The reclaim path treats a row older than STALE_CLAIM_MS as dead, so
+		// the refresh interval has to leave room for a missed one.
+		expect(LEASE_REFRESH_MS).toBeLessThan(STALE_CLAIM_MS);
+		expect(LEASE_REFRESH_MS * 2).toBeLessThanOrEqual(STALE_CLAIM_MS);
 	});
 });
 
