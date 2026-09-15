@@ -138,4 +138,42 @@ describe('x oauth callback', () => {
 		expect(out.status).toBe(302);
 		expect(out.location).toContain('oauth_expired');
 	});
+
+	it('refuses a pending row that belongs to another provider', async () => {
+		// The state is valid and bound to this session, but the pending row was
+		// started by the Threads flow: redeeming it here would store Threads
+		// credentials as an X connection.
+		const pendingId = await seedPending();
+		await db
+			.update(oauthPending)
+			.set({ instanceUrl: 'threads' })
+			.where(eq(oauthPending.id, pendingId));
+		const state = await bindOAuthState({
+			secret: TEST_ENV.AUTH_SECRET!,
+			pendingId,
+			sessionId: 'sess-x'
+		});
+		vi.stubGlobal('fetch', xFetch());
+		const url = new URL(
+			`http://localhost/api/connections/x/callback?code=CODE&state=${encodeURIComponent(state)}`
+		);
+		const out = await redirected(() =>
+			xCallback({
+				url,
+				locals: { db, env: TEST_ENV },
+				cookies: { get: () => 'sess-x' }
+			} as never)
+		);
+		expect(out.status).toBe(302);
+		expect(out.location).toContain('oauth_expired');
+		// The mismatched pending row is cleaned up rather than left to expire.
+		expect(await db.select().from(oauthPending).where(eq(oauthPending.id, pendingId))).toHaveLength(
+			0
+		);
+		const conns = await db.select().from(connections).where(eq(connections.userId, userId));
+		// No Threads credentials smuggled into a connection row; only the X row
+		// the earlier case created.
+		expect(conns.filter((c) => c.platform === 'threads')).toHaveLength(0);
+		expect(conns.filter((c) => c.platform === 'x')).toHaveLength(1);
+	});
 });
