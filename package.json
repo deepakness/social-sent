@@ -39,7 +39,6 @@
 		"test:unit": "vitest",
 		"test": "vitest run",
 		"test:e2e": "node scripts/e2e-prepare.mjs && playwright test",
-		"gen": "node scripts/wrangler.mjs types .wrangler/types/worker-configuration.d.ts",
 		"deploy": "node scripts/deploy.mjs",
 		"deploy:worker": "npm test && npm run build && node scripts/wrangler.mjs deploy",
 		"secrets:put": "node scripts/put-secrets.mjs",

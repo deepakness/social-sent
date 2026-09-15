@@ -1,3 +1,14 @@
+/**
+ * Hand-maintained declarations for the bindings and variables this app reads.
+ *
+ * Deliberately not generated: `wrangler types` produces a much larger file that
+ * does not know about the Worker *secrets* (APP_ENCRYPTION_KEY, AUTH_SECRET,
+ * the OAuth client secrets, ...) — it only sees what `wrangler.jsonc` declares,
+ * so its output would be less accurate than this. It also refuses to overwrite
+ * this file unless you rename it first.
+ *
+ * When you add a binding or a variable, declare it here too.
+ */
 interface D1PreparedStatement {
 	bind(...values: unknown[]): D1PreparedStatement;
 	first<T = Record<string, unknown>>(): Promise<T | null>;
