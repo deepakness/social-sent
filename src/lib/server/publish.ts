@@ -371,7 +371,7 @@ export async function publishTarget(
 	// the window while still running, and an overlapping tick would then claim
 	// the same row and post it twice. Renew while this publish is alive.
 	// Throttled to LEASE_REFRESH_MS so a normal publish costs no extra writes.
-	let leaseAt = now.getTime();
+	let leaseAt = Date.now();
 	const renewLease = async () => {
 		if (Date.now() - leaseAt < LEASE_REFRESH_MS) return;
 		try {
