@@ -568,14 +568,24 @@
 					poll: mastoPoll
 				}
 			: null;
+		// A failure belongs to the draft the editor is on. Clear a stale one when
+		// a different draft starts loading, or the banner would sit over content
+		// that is about to arrive and block saving on it.
+		if (loadFailedId && loadFailedId !== id) loadFailedId = null;
 		loadingDraftId = id;
 		try {
 			const res = await fetch(`/api/drafts/${id}`);
 			if (!res.ok) {
 				// The stored copy never arrived. Keep saving off until it does:
 				// otherwise the first keystroke autosaves an empty body over it.
-				loadFailedId = id;
-				showToast('Could not load this draft', 'error');
+				// Only arm the block for the draft the editor is actually on, and
+				// only while this attempt is still the live one: a late failure
+				// for a superseded attempt (the user moved on, a retry already
+				// succeeded) must not freeze saving over content that loaded.
+				if (loadingDraftId === id && page.url.searchParams.get('id') === id) {
+					loadFailedId = id;
+					showToast('Could not load this draft', 'error');
+				}
 				return;
 			}
 			const data = await res.json();
@@ -678,8 +688,10 @@
 			// effect below persists the merged content once the load settles.
 		} catch (err) {
 			// Network failure or an unparseable body: same protection as a 4xx.
-			loadFailedId = id;
-			showToast('Could not load this draft', 'error');
+			if (loadingDraftId === id && page.url.searchParams.get('id') === id) {
+				loadFailedId = id;
+				showToast('Could not load this draft', 'error');
+			}
 			throw err;
 		} finally {
 			if (loadingDraftId === id) loadingDraftId = null;
@@ -1863,7 +1875,7 @@
 		} else if (id !== initLoadedFor) {
 			initLoadedFor = id ?? null;
 		}
-		if (!id && loadedDraftContentFor) {
+		if (!id && (loadedDraftContentFor || loadFailedId)) {
 			// `page.url` does not track shallow `replaceState` (the autosave
 			// assigns the draft id that way), so it can still read id-less
 			// while the browser is on a loaded draft. Only a real navigation
@@ -1996,17 +2008,18 @@
 		>
 			<p class="min-w-0 flex-1 text-[13px] font-medium text-amber-900">
 				This draft could not be loaded. Saving is paused so an empty editor cannot overwrite the
-				stored copy.
+				stored copy. Retry loads it, replacing anything typed here.
 			</p>
 			<button
 				type="button"
+				disabled={loadingDraftId !== null}
 				onclick={() => {
 					const id = loadFailedId;
 					if (id) void loadDraft(id);
 				}}
-				class="rounded-full border border-amber-300 bg-white px-4 py-1.5 text-[12px] font-bold text-amber-900 transition-colors hover:bg-amber-100"
+				class="rounded-full border border-amber-300 bg-white px-4 py-1.5 text-[12px] font-bold text-amber-900 transition-colors hover:bg-amber-100 disabled:opacity-50"
 			>
-				Retry
+				{loadingDraftId !== null ? 'Loading…' : 'Retry'}
 			</button>
 		</div>
 	{/if}

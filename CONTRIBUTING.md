@@ -27,7 +27,9 @@ npm run lint      # prettier --check + eslint
 npm run build     # production worker
 ```
 
-All five must pass. `npm run format` fixes formatting.
+All five must pass. CI additionally runs `npm audit --audit-level=high` (a newly
+published advisory can fail a build that passes locally, so run it before you
+push a dependency change). `npm run format` fixes formatting.
 
 The e2e suite runs against its own local D1/R2 state (`.wrangler/e2e-state`) and never touches the state behind `npm run dev`. If you have no `.dev.vars`, the suite seeds one from `tests/e2e/fixtures/dev.vars`; an existing one is left alone, so make sure it sets `SKIP_TOTP=1` if you want the same path CI takes.
 

@@ -105,6 +105,8 @@ Both headers matter: the endpoint takes `SCHEDULER_SECRET` (`API_TOKEN` still wo
 
 Never run two per-minute callers plus a Cloudflare cron together. Ticks are idempotent, so overlap is safe, but keep it to one pinger plus the throttled GitHub backup.
 
+On a paid plan you can skip the external pinger: add a cron under `triggers` in `wrangler.jsonc` and set `ENABLE_CF_CRON` to `1` in its `vars`. The Worker ignores scheduled runs until that flag is set, so a leftover trigger cannot double-fire while you switch over.
+
 ### Failure alerts (optional)
 
 The dashboard shows a "failed to publish" banner linking to the Failed tab. To also get a morning-after email, set `RESEND_API_KEY` and `NOTIFY_EMAIL` as Worker secrets (the app no-ops without them), plus an optional `NOTIFY_FROM` sender on a domain verified in Resend. At most one digest is sent per 24h window, covering failures newer than the last digest. Posts that are still retrying are not emailed.

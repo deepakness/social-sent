@@ -48,6 +48,8 @@ interface IncomingRequestCfProperties {
 interface Env {
 	DB: D1Database;
 	MEDIA: R2Bucket;
+	/** Optional Cloudflare Queue: with it bound, the tick hands publishes to the
+	 *  consumer instead of publishing inline. Off by default (see wrangler.jsonc). */
 	PUBLISH_QUEUE?: Queue;
 	ASSETS: { fetch: typeof fetch };
 	APP_URL?: string;
@@ -71,6 +73,10 @@ interface Env {
 	X_CLIENT_SECRET?: string;
 	/** Local-dev only: skips 2FA. Honored for localhost APP_URLs in dev builds. */
 	SKIP_TOTP?: string;
+	/** Set to "1" to let a Cloudflare cron trigger run the tick (see README →
+	 *  Scheduling). scripts/wrap-worker.mjs no-ops the scheduled handler without
+	 *  it, so an old cron cannot fire twice while you migrate. */
+	ENABLE_CF_CRON?: string;
 }
 
 interface Queue<Body = unknown> {

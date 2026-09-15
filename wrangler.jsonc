@@ -15,8 +15,15 @@
 	//
 	// No crons here: the Workers free plan cannot hold a per-minute schedule.
 	// Point an external pinger or the GitHub Actions workflow at
-	// /api/internal/tick instead. If you do add crons, also set secret
-	// ENABLE_CF_CRON=1 or scripts/wrap-worker.mjs no-ops them.
+	// /api/internal/tick instead. To use a Cloudflare cron trigger instead
+	// (paid plan), add one under "triggers" and set ENABLE_CF_CRON=1 in the
+	// "vars" below — scripts/wrap-worker.mjs no-ops the scheduled handler
+	// without it, so a leftover trigger cannot run the tick twice.
+	//
+	// Optional: binding a queue makes the tick hand publishes to a consumer
+	// instead of publishing inline (one publish per message, with retries).
+	// Add a "queues" block with a producer named PUBLISH_QUEUE and a consumer
+	// for the same queue; src/hooks.server.ts picks the binding up automatically.
 	"workers_dev": true,
 	"preview_urls": true,
 	"observability": { "enabled": true },

@@ -4,7 +4,7 @@ export const MAX_IMAGE_BYTES = 16_000_000;
 export const BLUESKY_MAX_IMAGE_BYTES = 1_000_000;
 export const LINKEDIN_MAX_IMAGE_BYTES = 8_000_000;
 // LinkedIn combines a flattened thread into one post, so this is a per-post
-// cap. Mirrors LINKEDIN_MAX_IMAGES in lib/server/providers/linkedin.ts.
+// cap. The provider imports this, so the two cannot drift.
 export const LINKEDIN_MAX_IMAGES = 4;
 export const X_MAX_IMAGE_BYTES = 5_000_000;
 export const X_MAX_GIF_BYTES = 15_000_000;

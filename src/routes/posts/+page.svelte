@@ -183,10 +183,12 @@
 		rescheduleAt = scheduleFromDHM(d, h, m, new Date());
 	}
 
-	async function load() {
+	async function load(opts: { keepError?: boolean } = {}) {
 		loading = true;
-		// A fresh attempt supersedes the previous failure banner.
-		error = null;
+		// A fresh attempt supersedes the previous failure banner — except when
+		// this reload was triggered by an action that just reported a failure,
+		// where clearing it would hide the only message the user gets.
+		if (!opts.keepError) error = null;
 		try {
 			const [draftsRes, queueRes] = await Promise.all([fetch('/api/drafts'), fetch('/api/queue')]);
 			const failed: string[] = [];
@@ -638,7 +640,7 @@
 		const done = await bulkTargets('cancel', ids, 'Could not cancel').finally(() => {
 			busy = null;
 		});
-		if (done) await load();
+		if (done) await load({ keepError: true });
 	}
 
 	// Per-platform retry reuses the same bulk endpoint with a single id, so
@@ -653,7 +655,7 @@
 		await bulkTargets('retry', ids, 'Retry failed').finally(() => {
 			busy = null;
 		});
-		await load();
+		await load({ keepError: true });
 	}
 
 	async function retryOne(targetId: string) {
@@ -663,7 +665,7 @@
 		await bulkTargets('retry', [targetId], 'Retry failed').finally(() => {
 			busyTarget = null;
 		});
-		await load();
+		await load({ keepError: true });
 	}
 
 	// Per-platform discard reuses the whole-card cancel confirm + bulk
@@ -703,7 +705,7 @@
 			}
 		);
 		if (done) rescheduleId = null;
-		await load();
+		await load({ keepError: true });
 	}
 
 	const minRescheduleAt = $derived.by(() => {
