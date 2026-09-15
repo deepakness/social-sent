@@ -1,7 +1,16 @@
 import { isThreadsAuthFailure, isThreadsMediaFetchFailure } from './threads-error';
 
-export function humanizeError(raw: string | null | undefined): string {
-	if (!raw) return 'Something went wrong';
+/**
+ * The fixed, user-facing copy for a failure we recognise, or null when the only
+ * thing we would be doing is repeating the raw text back.
+ *
+ * `humanizeError` falls back to the raw text on purpose (a provider's message is
+ * often the most useful thing the user can read), but `handleError` needs the
+ * opposite for a 5xx: a driver or upstream message can carry SQL, table names or
+ * response bodies. It uses this function and substitutes a plain failure.
+ */
+export function humanizedCause(raw: string | null | undefined): string | null {
+	if (!raw) return null;
 	const s = raw.toLowerCase();
 	if (
 		s.includes('401') ||
@@ -45,30 +54,24 @@ export function humanizeError(raw: string | null | undefined): string {
 	}
 	if (
 		s.includes('timeout') ||
+		s.includes('timed out') ||
 		s.includes('econnrefused') ||
 		s.includes('fetch failed') ||
 		s.includes('enotfound')
 	) {
 		return 'Could not reach the network — check connection and try again';
 	}
-	// Size/character messages are safe to echo but still length-capped: the
-	// early `return raw` paths previously bypassed truncation and could leak
-	// unbounded server text containing those substrings.
-	if (
-		s.includes('16mb') ||
-		s.includes('95mb') ||
-		s.includes('8mb') ||
-		s.includes('5mb') ||
-		s.includes('1mb') ||
-		s.includes('too large') ||
-		s.includes('max 4')
-	)
-		return truncate(raw);
-	if (s.includes('grapheme') || s.includes('characters on this')) return truncate(raw);
 	if (s.includes('instance host') || s.includes('host not allowed')) {
 		return 'That instance URL isn’t allowed';
 	}
-	return truncate(raw);
+	return null;
+}
+
+export function humanizeError(raw: string | null | undefined): string {
+	if (!raw) return 'Something went wrong';
+	// Size and character messages are safe to echo, and the fallback caps the
+	// length: previously separate branches here returned the same thing.
+	return humanizedCause(raw) ?? truncate(raw);
 }
 
 function truncate(raw: string): string {

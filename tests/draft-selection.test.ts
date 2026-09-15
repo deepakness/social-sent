@@ -263,6 +263,24 @@ describe('draft field validation', () => {
 		close();
 	});
 
+	it('creates a draft from an empty body and rejects malformed JSON', async () => {
+		await seed();
+		const post = (body?: string) =>
+			draftsPOST({
+				request: new Request('http://localhost/api/drafts', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					...(body === undefined ? {} : { body })
+				}),
+				locals: localsFor()
+			} as never) as Promise<Response>;
+
+		// Every field is optional, so no body at all means "create a draft".
+		expect((await post()).status).toBe(201);
+		expect((await post('{}')).status).toBe(201);
+		expect((await post('{"baseBody":')).status).toBe(400);
+	});
+
 	it('still accepts a normal patch', async () => {
 		await seed();
 		const res = await patch(JSON.stringify({ title: '  new title  ', baseBody: 'fresh' }));

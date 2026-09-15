@@ -10,6 +10,7 @@ import { encryptJson } from '$lib/server/crypto';
 import { newId, type AppDb } from '$lib/server/db/client';
 import { connections, drafts, publishTargets, users } from '$lib/server/db/schema';
 import { createTestDb, createTestMedia, TEST_ENV } from '$lib/server/db/test';
+import { draftHasInFlightPublish } from '$lib/server/publish-plan';
 import {
 	claimDueTargets,
 	consumePublishJob,
@@ -212,6 +213,42 @@ describe('claimDueTargets stale publishing', () => {
 		expect(tick.results.some((r) => r.id === targetId && r.status === 'queued')).toBe(true);
 		const [row] = await db.select().from(publishTargets).where(eq(publishTargets.id, targetId));
 		expect(row.jobId).toBeTruthy();
+		// Handing it over has to leave it claimable: the consumer's own claim
+		// only matches a row that still looks stale, so tagging it in place
+		// (which refreshes updatedAt) queued it forever and kept the draft
+		// locked as "publishing in progress".
+		expect(row.status).not.toBe('publishing');
+		const consumed = await consumePublishJob(
+			db,
+			TEST_ENV,
+			createTestMedia(),
+			targetId,
+			async (input) => {
+				const url =
+					typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+				if (url.includes('createSession')) {
+					return Response.json({
+						accessJwt: 'a',
+						refreshJwt: 'r',
+						did: 'did:plc:test',
+						handle: 'test.bsky.social'
+					});
+				}
+				if (url.includes('createRecord')) {
+					return Response.json({
+						uri: 'at://did:plc:test/app.bsky.feed.post/recovered',
+						cid: 'cid'
+					});
+				}
+				return new Response(`unmocked ${url}`, { status: 404 });
+			}
+		);
+		expect(consumed.status).toBe('published');
+		// The row is done, so nothing reports the draft as being published: the
+		// old tag-in-place behaviour left `publishing` + `jobId` behind forever,
+		// which locked the draft, its media, disconnect and retry behind a 409.
+		const after = await db.select().from(publishTargets).where(eq(publishTargets.draftId, d));
+		expect(draftHasInFlightPublish(after)).toBe(false);
 		await db.delete(publishTargets).where(eq(publishTargets.id, targetId));
 	});
 

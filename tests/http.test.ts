@@ -16,6 +16,18 @@ describe('handleError', () => {
 		expect(await res.json()).toEqual({ error: 'Invalid code' });
 	});
 
+	it('keeps the fixed copy for a failure it recognises', async () => {
+		// A provider timeout is a 5xx, but "check your connection" is the useful
+		// thing to say — only unrecognised text (SQL, response bodies) is hidden.
+		const res = handleError(
+			Object.assign(new Error('Provider request timed out'), { status: 504 })
+		);
+		expect(res.status).toBe(504);
+		expect((await res.json()) as { error: string }).toEqual({
+			error: 'Could not reach the network — check connection and try again'
+		});
+	});
+
 	it('never echoes a 5xx cause to the client', async () => {
 		const res = handleError(new Error('D1_ERROR: no such table: publish_targets at offset 42'));
 		expect(res.status).toBe(500);

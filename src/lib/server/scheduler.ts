@@ -292,6 +292,34 @@ export async function maybeSendFailureDigest(
 	return { sent: true, failedCount: failures.length };
 }
 
+/**
+ * Recover rows a dead consumer left in `publishing`.
+ *
+ * Nothing can pick such a row up in that state: the consumer's own claim only
+ * matches while the row *looks* stale, and the hand-off that queues it writes
+ * the very timestamp that match depends on. Left alone, the row would keep its
+ * `publishing` status and its `jobId` forever, which also makes
+ * `draftHasInFlightPublish` true — the draft, its media, a disconnect and
+ * Retry/Reschedule would all answer 409 with nothing actually running.
+ *
+ * Resetting to `pending` puts the row back into the "publish now" shape that
+ * both the hand-off and the inline claim understand, and a partially published
+ * thread still resumes from its attempt checkpoints.
+ */
+export async function recoverStalePublishing(db: AppDb, now: Date = new Date()) {
+	const staleBefore = new Date(now.getTime() - STALE_CLAIM_MS);
+	await db
+		.update(publishTargets)
+		.set({ status: 'pending', scheduledFor: null, jobId: null, updatedAt: now })
+		.where(
+			and(
+				eq(publishTargets.status, 'publishing'),
+				isNull(publishTargets.remotePostId),
+				lte(publishTargets.updatedAt, staleBefore)
+			)
+		);
+}
+
 export async function claimDueTargets(db: AppDb, now = new Date(), limit = TICK_BATCH_LIMIT) {
 	const staleBefore = new Date(now.getTime() - STALE_CLAIM_MS);
 	const rows = await db
@@ -354,6 +382,9 @@ export async function runSchedulerTick(
 	// challenge tables grew unbounded — no cron exists on the free plan).
 	await purgeExpiredMfaChallenges(db);
 	await purgeExpiredSessions(db);
+	// Before the scan, so a row a dead consumer left behind is queued (or
+	// published inline) by this same tick instead of being scanned and skipped.
+	await recoverStalePublishing(db);
 	const due = await claimDueTargets(db);
 	const results: Array<{ id: string; status: string }> = [];
 	for (const t of due) {
@@ -375,18 +406,7 @@ export async function runSchedulerTick(
 					and(
 						eq(publishTargets.id, t.id),
 						isNull(publishTargets.remotePostId),
-						or(
-							inArray(publishTargets.status, ['scheduled', 'pending']),
-							// The scan also returns rows wedged in `publishing`
-							// past the stale window (a consumer that died
-							// mid-publish). They have to be handed off too:
-							// otherwise the CAS below matches nothing, the loop
-							// skips them, and the row stays `publishing` forever.
-							and(
-								eq(publishTargets.status, 'publishing'),
-								lte(publishTargets.updatedAt, staleBefore)
-							)
-						),
+						inArray(publishTargets.status, ['scheduled', 'pending']),
 						or(isNull(publishTargets.jobId), lte(publishTargets.updatedAt, staleBefore))
 					)
 				)

@@ -126,13 +126,25 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
 		const user = requireUser(locals.user);
 		requireScope(locals, 'write');
-		const body = await request.json().catch(() => null);
+		// Every field here is optional, so an empty body is a legitimate
+		// "create a draft with defaults" (that is what this did before the
+		// guard). Malformed JSON is still a 400 rather than a 500.
+		const raw = await request.text().catch(() => '');
+		let body: unknown = {};
+		if (raw.trim()) {
+			try {
+				body = JSON.parse(raw);
+			} catch {
+				return fail('Invalid JSON body', 400);
+			}
+		}
 		if (!body || typeof body !== 'object') return fail('Invalid JSON body', 400);
-		const selection = normalizeSelectedConnectionIds(body.selectedConnectionIds);
+		const fields = body as Record<string, unknown>;
+		const selection = normalizeSelectedConnectionIds(fields.selectedConnectionIds);
 		if (!selection.ok) return fail(selection.error, 400);
-		const title = parseDraftTitle(body.title ?? null);
+		const title = parseDraftTitle(fields.title ?? null);
 		if (!title.ok) return fail(title.error, 400);
-		const text = parseDraftBody(body.baseBody ?? '');
+		const text = parseDraftBody(fields.baseBody ?? '');
 		if (!text.ok) return fail(text.error, 400);
 		const now = new Date();
 		const [draft] = await locals.db
