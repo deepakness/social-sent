@@ -20,7 +20,6 @@
 	import { slide, fly } from 'svelte/transition';
 	import { isOverSelectedPlatformLimit } from '$lib/domain/editor-limits';
 	import { humanizeError } from '$lib/domain/human-error';
-	import { sessionExpiredIfUnauthorized } from '$lib/components/session-expired';
 	import { dialogFocus } from '$lib/components/dialog-focus';
 	import { platformColorClass } from '$lib/components/platform-color';
 	import {
@@ -577,7 +576,17 @@
 		loadingDraftId = id;
 		try {
 			const res = await fetch(`/api/drafts/${id}`);
-			if (sessionExpiredIfUnauthorized(res)) return;
+			if (res.status === 401) {
+				// Navigating to /login here would throw away whatever is typed in
+				// the composer (it exists only in memory, and the save on the way
+				// out would 401 too). Pause saving, say why, and offer the link.
+				loadFailedId = id;
+				showToast('Your session expired — sign in again to keep editing', 'error', {
+					label: 'Sign in',
+					href: '/login'
+				});
+				return;
+			}
 			if (!res.ok) {
 				// The stored copy never arrived. Keep saving off until it does:
 				// otherwise the first keystroke autosaves an empty body over it.
@@ -1465,8 +1474,13 @@
 	}
 
 	let pendingMediaRemove = $state<string | null>(null);
-	let mediaRemoving = $state(false);
+	// Ids with a delete in flight: the dialog stays usable for a *different*
+	// image while one is being removed.
+	let mediaRemoving = $state<string[]>([]);
 	let keepMediaBtn: HTMLButtonElement | null = $state(null);
+	const mediaBusy = $derived(
+		pendingMediaRemove !== null && mediaRemoving.includes(pendingMediaRemove)
+	);
 	let isDiscardOpen = $state(false);
 	let discarding = $state(false);
 
@@ -1536,28 +1550,30 @@
 	}
 
 	async function confirmRemoveMedia() {
-		if (mediaRemoving) return;
 		const mediaId = pendingMediaRemove;
-		if (!mediaId || !draftId) {
-			pendingMediaRemove = null;
-			return;
-		}
-		mediaRemoving = true;
+		if (!mediaId || !draftId || mediaRemoving.includes(mediaId)) return;
+		mediaRemoving = [...mediaRemoving, mediaId];
 		try {
 			const res = await fetch(
 				`/api/drafts/${draftId}/media?mediaId=${encodeURIComponent(mediaId)}`,
 				{ method: 'DELETE' }
 			);
-			if (sessionExpiredIfUnauthorized(res)) return;
+			if (res.status === 401) {
+				showToast('Your session expired — sign in again to keep editing', 'error', {
+					label: 'Sign in',
+					href: '/login'
+				});
+				return;
+			}
 			if (!res.ok) throw new Error('Failed to remove image');
 			media = media.filter((m) => m.id !== mediaId);
-			// Close only once the delete is confirmed: a failure keeps the
-			// dialog (and the image) so the user is not told it worked.
-			pendingMediaRemove = null;
+			// Close only the dialog that is still about this image: one opened
+			// for another image while this request was in flight stays.
+			if (pendingMediaRemove === mediaId) pendingMediaRemove = null;
 		} catch (e) {
 			showToast(e instanceof Error ? e.message : 'Failed to remove image', 'error');
 		} finally {
-			mediaRemoving = false;
+			mediaRemoving = mediaRemoving.filter((id) => id !== mediaId);
 		}
 	}
 
@@ -2972,9 +2988,9 @@
 			class="w-full max-w-sm rounded-[1.5rem] border border-stone-200/80 bg-white/95 p-5 shadow-xl backdrop-blur-xl"
 			use:dialogFocus={{
 				initial: keepMediaBtn,
-				onEscape: () => {
-					if (!mediaRemoving) pendingMediaRemove = null;
-				}
+				// Always dismissable: closing does not cancel the request, and a
+				// hung DELETE must not trap a keyboard user in the dialog.
+				onEscape: () => (pendingMediaRemove = null)
 			}}
 		>
 			<h2 id="remove-media-title" class="text-sm font-extrabold text-stone-900">
@@ -2987,7 +3003,7 @@
 				<button
 					type="button"
 					bind:this={keepMediaBtn}
-					disabled={mediaRemoving}
+					disabled={mediaBusy}
 					onclick={() => (pendingMediaRemove = null)}
 					class="rounded-full border border-stone-200/80 px-4 py-1.5 text-sm font-bold text-stone-600 disabled:opacity-50"
 				>
@@ -2996,11 +3012,11 @@
 				<button
 					type="button"
 					data-testid="confirm-dialog-ok-media"
-					disabled={mediaRemoving}
+					disabled={mediaBusy}
 					onclick={() => void confirmRemoveMedia()}
 					class="rounded-full bg-stone-900 px-4 py-1.5 text-sm font-bold text-white disabled:opacity-50"
 				>
-					{mediaRemoving ? 'Removing…' : 'Remove'}
+					{mediaBusy ? 'Removing…' : 'Remove'}
 				</button>
 			</div>
 		</div>

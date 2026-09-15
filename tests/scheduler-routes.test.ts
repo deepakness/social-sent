@@ -4,6 +4,7 @@ import { newId, type AppDb } from '$lib/server/db/client';
 import { connections, drafts, publishTargets, users } from '$lib/server/db/schema';
 import { encryptJson } from '$lib/server/crypto';
 import { createTestDb, createTestMedia, TEST_ENV } from '$lib/server/db/test';
+import { writeHeartbeat } from '$lib/server/scheduler';
 import { POST as tickPOST } from '../src/routes/api/internal/tick/+server';
 import { GET as healthGET } from '../src/routes/api/health/+server';
 import { GET as schedulerHealthGET } from '../src/routes/api/scheduler/health/+server';
@@ -143,6 +144,9 @@ describe('scheduler routes', () => {
 	});
 
 	it('reports scheduler status to a session, and refuses an anonymous call', async () => {
+		// Its own heartbeat: without one the endpoint reports "no heartbeat yet",
+		// which made this test depend on the tick test above running first.
+		await writeHeartbeat(db);
 		const ok = (await schedulerHealthGET({
 			locals: { db, user: sessionUser, authMethod: 'session' }
 		} as never)) as Response;

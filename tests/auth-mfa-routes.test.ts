@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { hotp, secretFromBase32, totpAt, totpCounter } from '$lib/domain/totp';
 import { getSessionUser, SESSION_COOKIE } from '$lib/server/auth';
 import type { AppDb } from '$lib/server/db/client';
-import { users } from '$lib/server/db/schema';
+import { totpBackupCodes, users } from '$lib/server/db/schema';
 import { createTestDb, TEST_ENV } from '$lib/server/db/test';
 import { MFA_COOKIE } from '$lib/server/totp';
 import { POST as loginPOST } from '../src/routes/api/auth/login/+server';
@@ -46,6 +46,8 @@ describe('password + TOTP login routes', () => {
 	let userId: string;
 	let secret: string;
 	let backupCodes: string[];
+	/** What the one-time enrolment left behind, for the assertions that need it. */
+	const harness: { jar: Jar | null } = { jar: null };
 
 	const json = (body: unknown) =>
 		new Request('http://localhost/api/auth/login', {
@@ -85,16 +87,16 @@ describe('password + TOTP login routes', () => {
 	beforeAll(async () => {
 		({ db, close } = await createTestDb());
 		// The login route bootstraps the admin row itself.
-		const jar = cookieJar();
-		const res = await login(jar);
-		expect(res.status).toBe(200);
+		await login(cookieJar());
 		const admin = (await db.select().from(users).where(eq(users.email, TEST_ENV.ADMIN_EMAIL)))[0];
 		userId = admin.id;
+		await enrolFirstTime();
 	});
-	afterAll(() => close());
 
-	it('asks a password-only account to enrol, and enrolling issues a session', async () => {
+	/** Runs once: password login → enrol → a verified session. */
+	async function enrolFirstTime() {
 		const jar = cookieJar();
+		harness.jar = jar;
 		const started = await login(jar);
 		expect(await started.json()).toEqual({ needEnroll: true });
 		expect(jar.get(MFA_COOKIE)).toBeTruthy();
@@ -121,6 +123,17 @@ describe('password + TOTP login routes', () => {
 		// The MFA cookie is spent, and the account is enrolled.
 		expect(jar.get(MFA_COOKIE)).toBeUndefined();
 		expect((await db.select().from(users).where(eq(users.id, userId)))[0].totpEnabled).toBe(true);
+	}
+
+	afterAll(() => close());
+
+	it('enrolled the account during setup and left a working session', async () => {
+		// The enrolment flow itself runs in beforeAll so that every test here can
+		// run on its own (`vitest -t`); this asserts what it left behind.
+		expect(secret).toMatch(/^[A-Z2-7]+$/);
+		expect(backupCodes).toHaveLength(10);
+		expect((await db.select().from(users).where(eq(users.id, userId)))[0].totpEnabled).toBe(true);
+		expect(await getSessionUser(db, TEST_ENV, harness.jar!.get(SESSION_COOKIE)!)).toBeTruthy();
 	});
 
 	it('rejects a wrong code and keeps the session closed', async () => {
@@ -169,9 +182,15 @@ describe('password + TOTP login routes', () => {
 		expect(res.status).toBe(200);
 		const status = (await res.json()) as { enabled: boolean; backupRemaining: number };
 		expect(status.enabled).toBe(true);
-		// Two backup codes have been spent by now (one in the single-use test,
-		// one here).
-		expect(status.backupRemaining).toBe(8);
+		// Cross-check the count against the table instead of a running total, so
+		// this assertion does not depend on which tests ran before it.
+		const unused = (
+			await db
+				.select()
+				.from(totpBackupCodes)
+				.where(and(eq(totpBackupCodes.userId, userId), isNull(totpBackupCodes.usedAt)))
+		).length;
+		expect(status.backupRemaining).toBe(unused);
 
 		// A personal key must not be able to read credential metadata.
 		const bearer = await statusGET({

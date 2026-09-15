@@ -25,6 +25,7 @@ import { users } from '$lib/server/db/schema';
 import { envFromPlatform } from '$lib/server/env';
 import { memoryMediaStore, r2MediaStore } from '$lib/server/media';
 import { runSchedulerTick } from '$lib/server/scheduler';
+import { securityHeadersFor } from '$lib/server/security-headers';
 
 export function isPublicPath(path: string): boolean {
 	if (path === '/login' || path === '/login/setup-2fa' || path === '/login/verify') return true;
@@ -46,22 +47,8 @@ export function isPublicPath(path: string): boolean {
 
 function withPageSecurity(path: string, response: Response, secure: boolean): Response {
 	const next = applyApiCors(path, response);
-	if (secure) {
-		// Only over https: pinning a plain-http local dev server to https would
-		// break it in the browser for good.
-		next.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-	}
-	next.headers.set('X-Content-Type-Options', 'nosniff');
-	next.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-	// The app uses none of these; saying so stops a future dependency from
-	// asking the browser for them. Clipboard access is left at its 'self'
-	// default because the API-key copy button needs it.
-	next.headers.set(
-		'Permissions-Policy',
-		'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), midi=()'
-	);
-	if (!path.startsWith('/api/')) {
-		next.headers.set('X-Frame-Options', 'DENY');
+	for (const [name, value] of Object.entries(securityHeadersFor(path, secure))) {
+		next.headers.set(name, value);
 	}
 	return next;
 }

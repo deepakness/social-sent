@@ -599,8 +599,14 @@
 		if (accountMenuEl && !accountMenuEl.contains(event.target as Node)) accountMenuOpen = false;
 	}
 
-	function onWindowKeydown() {
-		// Escape is handled by use:menuNav, which also restores focus.
+	function onWindowKeydown(event: KeyboardEvent) {
+		// The action handles Escape while focus is inside the menu (and restores
+		// focus); this covers the case where focus has moved elsewhere on the
+		// page, so the menu never becomes undismissable.
+		if (event.key === 'Escape' && accountMenuOpen) {
+			accountMenuOpen = false;
+			accountFilterTrigger?.focus();
+		}
 	}
 
 	/** Single bulk call for a whole card. The server returns per-id results; the
@@ -871,7 +877,12 @@
 				</button>
 				<button
 					type="button"
-					onclick={() => (error = null)}
+					onclick={() => {
+						error = null;
+						// A dismissed banner must not keep suppressing the empty
+						// state: the user asked for the page back.
+						loadFailed = false;
+					}}
 					aria-label="Dismiss error"
 					class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-red-500 transition-colors hover:bg-red-100 hover:text-red-700"
 				>
@@ -1003,7 +1014,7 @@
 							</span>
 						{:else if badge === 'failed'}
 							<span
-								class="inline-flex items-center gap-1.5 rounded bg-red-50 px-2.5 py-1 text-[10px] font-bold tracking-widest text-red-600 uppercase"
+								class="inline-flex items-center gap-1.5 rounded bg-red-50 px-2.5 py-1 text-[10px] font-bold tracking-widest text-red-700 uppercase"
 							>
 								<XCircle class="h-3 w-3" /> Failed
 							</span>
