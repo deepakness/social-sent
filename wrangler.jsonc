@@ -1,0 +1,45 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "socialsent",
+	"compatibility_date": "2026-08-17",
+	"compatibility_flags": ["nodejs_als"],
+	"main": ".svelte-kit/cloudflare/_worker.js",
+	"assets": {
+		"binding": "ASSETS",
+		"directory": ".svelte-kit/cloudflare"
+	},
+	// This config is the generic one that ships with the repo. If you deploy a
+	// personal instance, put your own Worker name, D1 database_id and R2 bucket
+	// in `wrangler.personal.jsonc` (gitignored) and every npm script will pick
+	// it up automatically — see scripts/wrangler.mjs.
+	//
+	// No crons here: the Workers free plan cannot hold a per-minute schedule.
+	// Point an external pinger or the GitHub Actions workflow at
+	// /api/internal/tick instead. If you do add crons, also set secret
+	// ENABLE_CF_CRON=1 or scripts/wrap-worker.mjs no-ops them.
+	"workers_dev": true,
+	"preview_urls": true,
+	"observability": { "enabled": true },
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "socialsent",
+			// Replace with the id printed by: npx wrangler d1 create socialsent
+			"database_id": "REPLACE_WITH_YOUR_DATABASE_ID",
+			"migrations_dir": "drizzle"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "MEDIA",
+			// Create it first: npx wrangler r2 bucket create socialsent-media
+			"bucket_name": "socialsent-media"
+		}
+	],
+	// Non-secret vars only. Keys, passwords and OAuth client secrets belong in
+	// Worker secrets (`npm run secrets:put`), because a deploy overwrites vars
+	// with whatever this file says.
+	"vars": {
+		"APP_NAME": "SocialSent"
+	}
+}
