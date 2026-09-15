@@ -51,6 +51,30 @@ test('page responses carry the security headers, and HSTS only over https', asyn
 	expect(headers['strict-transport-security']).toBeUndefined();
 });
 
+test('an unknown path redirects instead of rendering, and the landing page is covered', async ({
+	page,
+	request
+}) => {
+	// The hook sends any non-public, unknown path to /login, and a signed-in
+	// visitor is bounced on to the dashboard from there — so a typo lands on a
+	// real page rather than a soft 404, and that page is still covered.
+	const landed = await page.goto('/definitely-not-a-page');
+	expect(landed!.status()).toBe(200);
+	expect(landed!.headers()['content-security-policy']).toContain("default-src 'self'");
+	expect(landed!.headers()['x-frame-options']).toBe('DENY');
+
+	// An anonymous probe of the same path gets a redirect, not a rendered page.
+	const anon = await request.get('/definitely-not-a-page', { maxRedirects: 0 });
+	expect([302, 303, 307]).toContain(anon.status());
+	expect(anon.headers()['location'] ?? '').toContain('/login');
+
+	// JSON responses get nosniff and the referrer policy; they need no CSP.
+	const api = await request.get('/api/health');
+	expect(api.headers()['x-content-type-options']).toBe('nosniff');
+	expect(api.headers()['referrer-policy']).toBe('strict-origin-when-cross-origin');
+	expect(api.headers()['permissions-policy']).toContain('camera=()');
+});
+
 test('every page runs without a CSP violation', async ({ page }) => {
 	test.setTimeout(120_000);
 	await signIn(page);
