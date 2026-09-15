@@ -16,7 +16,11 @@ import { requireScope, requireUser } from '$lib/server/require';
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
 		requireUser(locals.user);
-		requireScope(locals, 'read');
+		// `write`, not `read`: this is the one endpoint that makes the server
+		// fetch a caller-supplied URL. Host validation, redirect re-checking and
+		// size caps bound it, but a least-privileged key should not be able to
+		// use the Worker as an egress proxy.
+		requireScope(locals, 'write');
 		const raw = (url.searchParams.get('url') || '').trim();
 		if (!raw) return fail('url required');
 		// Accept bare pastes (`example.com/x`) as well as full URLs.

@@ -44,27 +44,40 @@ export function isPublicPath(path: string): boolean {
 	return false;
 }
 
-function withPageSecurity(path: string, response: Response): Response {
+function withPageSecurity(path: string, response: Response, secure: boolean): Response {
 	const next = applyApiCors(path, response);
+	if (secure) {
+		// Only over https: pinning a plain-http local dev server to https would
+		// break it in the browser for good.
+		next.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+	}
+	next.headers.set('X-Content-Type-Options', 'nosniff');
+	next.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+	// The app uses none of these; saying so stops a future dependency from
+	// asking the browser for them. Clipboard access is left at its 'self'
+	// default because the API-key copy button needs it.
+	next.headers.set(
+		'Permissions-Policy',
+		'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), midi=()'
+	);
 	if (!path.startsWith('/api/')) {
 		next.headers.set('X-Frame-Options', 'DENY');
-		next.headers.set('X-Content-Type-Options', 'nosniff');
-		next.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
 	}
 	return next;
 }
 
-function deny(path: string, status: number, body: unknown, location?: string) {
+function deny(path: string, status: number, body: unknown, secure: boolean, location?: string) {
 	if (location && !path.startsWith('/api/')) {
-		return withPageSecurity(path, new Response(null, { status, headers: { location } }));
+		return withPageSecurity(path, new Response(null, { status, headers: { location } }), secure);
 	}
-	return withPageSecurity(path, json(body, { status }));
+	return withPageSecurity(path, json(body, { status }), secure);
 }
 
 let lastLocalTickAt = 0;
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const path = event.url.pathname;
+	const secureRequest = event.url.protocol === 'https:';
 	if (event.request.method === 'OPTIONS' && path.startsWith('/api/')) {
 		// Same-origin app: no CORS preflight needed. Bare 204 (no
 		// Access-Control-* headers) so browsers default-deny cross-origin reads.
@@ -183,7 +196,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		!['GET', 'HEAD', 'OPTIONS'].includes(event.request.method) &&
 		!hasAllowedMutationOrigin(event.request, event.url)
 	) {
-		return deny(path, 403, { error: 'Origin mismatch' });
+		return deny(path, 403, { error: 'Origin mismatch' }, secureRequest);
 	}
 
 	// Scheduler bypass: SCHEDULER_SECRET (preferred) or API_TOKEN. AUTH_SECRET
@@ -192,7 +205,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		isInternalApiPath(path) &&
 		anySecretMatches(bearer, [appEnv.SCHEDULER_SECRET, appEnv.API_TOKEN])
 	) {
-		return withPageSecurity(path, await resolve(event));
+		return withPageSecurity(path, await resolve(event), secureRequest);
 	}
 
 	// Dev convenience: SKIP_TOTP (honored for localhost APP_URLs only) treats
@@ -214,16 +227,17 @@ export const handle: Handle = async ({ event, resolve }) => {
 			path === '/api/auth/logout' ||
 			path === '/api/auth/me';
 		if (!allowed) {
-			if (path.startsWith('/api/')) return deny(path, 401, { error: 'Unauthorized' });
-			return deny(path, 303, { error: 'Unauthorized' }, '/login/setup-2fa');
+			if (path.startsWith('/api/'))
+				return deny(path, 401, { error: 'Unauthorized' }, secureRequest);
+			return deny(path, 303, { error: 'Unauthorized' }, secureRequest, '/login/setup-2fa');
 		}
-		return withPageSecurity(path, await resolve(event));
+		return withPageSecurity(path, await resolve(event), secureRequest);
 	}
 
 	if (!isFullyVerified(user) && !isPublicPath(path)) {
-		if (path.startsWith('/api/')) return deny(path, 401, { error: 'Unauthorized' });
-		return deny(path, 303, { error: 'Unauthorized' }, '/login');
+		if (path.startsWith('/api/')) return deny(path, 401, { error: 'Unauthorized' }, secureRequest);
+		return deny(path, 303, { error: 'Unauthorized' }, secureRequest, '/login');
 	}
 
-	return withPageSecurity(path, await resolve(event));
+	return withPageSecurity(path, await resolve(event), secureRequest);
 };
