@@ -99,10 +99,15 @@ export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.apiKeyScopes = null;
 	const raw = event.cookies.get(SESSION_COOKIE);
 	const bearer = extractBearerToken(event.request.headers);
-	// The admin row is only needed to mint the machine user (bearer requests)
-	// or to bootstrap login on a fresh DB (login ensures it directly). Cookie
-	// requests skip it: one fewer SELECT and no DELETE write per request.
-	const admin = bearer || !raw ? await ensureAdminUser(db, appEnv, platformEnv.DB) : null;
+	// The admin row is only needed to mint the machine user for the env
+	// API_TOKEN and to save a lookup when a personal key belongs to the admin
+	// (the API-key path below falls back to a lookup by id). A fully anonymous
+	// request needs neither, and skipping it here keeps unauthenticated traffic
+	// — health probes, bots probing /login — from doing D1 work on every hit.
+	// Login bootstraps the row itself when a fresh database has none.
+	const hasCredential =
+		bearer !== null || (event.request.headers.get('x-api-key')?.trim() ?? '') !== '';
+	const admin = hasCredential ? await ensureAdminUser(db, appEnv, platformEnv.DB) : null;
 
 	const session = await getSessionUser(db, appEnv, raw);
 	event.locals.user = session?.user ?? null;

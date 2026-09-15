@@ -7,7 +7,8 @@ import { startEnrollChallenge, startLoginChallenge } from '$lib/server/totp';
 
 export const POST: RequestHandler = async ({ request, locals, cookies, url }) => {
 	try {
-		const body = await request.json();
+		const body = await request.json().catch(() => null);
+		if (!body || typeof body !== 'object') return fail('Invalid JSON body', 400);
 		const email = String(body.email || '').trim();
 		const password = String(body.password || '');
 		const remember = body.remember !== false;

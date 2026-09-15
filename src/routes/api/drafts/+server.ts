@@ -1,5 +1,6 @@
 import { desc, eq, inArray, type InferSelectModel } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
+import { parseDraftBody, parseDraftTitle } from '$lib/domain/validation/draft-fields';
 import { batchQueries, chunkIds, newId } from '$lib/server/db/client';
 import {
 	connections,
@@ -125,17 +126,22 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
 		const user = requireUser(locals.user);
 		requireScope(locals, 'write');
-		const body = await request.json().catch(() => ({}));
+		const body = await request.json().catch(() => null);
+		if (!body || typeof body !== 'object') return fail('Invalid JSON body', 400);
 		const selection = normalizeSelectedConnectionIds(body.selectedConnectionIds);
 		if (!selection.ok) return fail(selection.error, 400);
+		const title = parseDraftTitle(body.title ?? null);
+		if (!title.ok) return fail(title.error, 400);
+		const text = parseDraftBody(body.baseBody ?? '');
+		if (!text.ok) return fail(text.error, 400);
 		const now = new Date();
 		const [draft] = await locals.db
 			.insert(drafts)
 			.values({
 				id: newId(),
 				userId: user.id,
-				title: body.title || null,
-				baseBody: body.baseBody ?? '',
+				title: title.value,
+				baseBody: text.value,
 				...(selection.value !== undefined ? { selectedConnectionIds: selection.value } : {}),
 				status: 'draft',
 				createdAt: now,

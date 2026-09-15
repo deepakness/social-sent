@@ -6,7 +6,8 @@ import { consumePublishJob } from '$lib/server/scheduler';
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
 		assertScheduler(request, locals.env);
-		const body = await request.json();
+		const body = await request.json().catch(() => null);
+		if (!body || typeof body !== 'object') return fail('Invalid JSON body', 400);
 		const targetId = String(body.targetId || '');
 		if (!targetId) return fail('targetId required');
 		const result = await consumePublishJob(locals.db, locals.env, locals.media, targetId);

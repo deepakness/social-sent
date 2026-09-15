@@ -28,3 +28,10 @@ Anything that exposes those — a key leak, a way to read another tenant's row, 
 ## Supported versions
 
 The `main` branch is the only supported version; fixes are not backported.
+
+## Recommended hardening for your own instance
+
+- **Rate-limit the public routes at the edge** (Cloudflare → Security → WAF → Rate limiting rules): `/api/auth/login`, `/api/internal/tick`, and `/api/health` are reachable without a session. Login already locks out after repeated failures, and the other two do little work per hit, but a rate limit is the right place to absorb a flood.
+- Keep `SKIP_TOTP` and localhost Mastodon hosts off outside local development — both are gated on `APP_URL` pointing at localhost, so a real deployment never enables them by accident.
+
+The app itself does not throttle requests: it is built for a single person, and an in-Worker counter without a Durable Object or KV binding would be security theatre rather than a defence.

@@ -124,3 +124,33 @@ describe('POST /api/drafts/[id]/media quotas', () => {
 		expect(await res.json()).toMatchObject({ error: expect.stringMatching(/per account/) });
 	});
 });
+
+describe('POST /api/drafts/[id]/media request ceiling', () => {
+	it('refuses an oversized body before parsing the multipart', async () => {
+		let parsed = false;
+		const request = {
+			headers: new Headers({ 'content-length': '100000001' }),
+			formData: async () => {
+				parsed = true;
+				throw new Error('formData must not run for an oversized body');
+			}
+		} as unknown as Request;
+		const res = (await mediaPOST({
+			params: { id: 'irrelevant' },
+			request,
+			locals: {
+				db: null,
+				user: {
+					id: 'u1',
+					email: 'ceiling@localhost',
+					timezone: 'UTC',
+					totpEnabled: true,
+					mfaVerified: true
+				}
+			}
+		} as never)) as Response;
+		// Rejected before the ownership query too: nothing here may touch D1.
+		expect(res.status).toBe(413);
+		expect(parsed).toBe(false);
+	});
+});

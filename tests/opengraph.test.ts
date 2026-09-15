@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { fetchOgImage, fetchOpenGraph, parseOpenGraphHtml } from '$lib/server/opengraph';
+import {
+	OG_HTML_MAX_BYTES,
+	fetchOgImage,
+	fetchOpenGraph,
+	parseOpenGraphHtml
+} from '$lib/server/opengraph';
 import type { FetchLike } from '$lib/server/providers/types';
 
 describe('parseOpenGraphHtml', () => {
@@ -56,6 +61,64 @@ describe('opengraph hardening', () => {
 			(e: unknown) => e as { status?: number }
 		);
 		expect(err?.status).toBe(400);
+	});
+
+	it('refuses an oversized body before buffering it', async () => {
+		let read = false;
+		// A declared length past the cap: the body must never be touched.
+		const huge = (async () =>
+			({
+				ok: true,
+				status: 200,
+				headers: new Headers({
+					'content-type': 'text/html',
+					'content-length': String(OG_HTML_MAX_BYTES + 1)
+				}),
+				body: {
+					getReader: () => {
+						read = true;
+						return {
+							read: async () => ({ done: true, value: undefined }),
+							cancel: async () => {}
+						};
+					}
+				},
+				arrayBuffer: async () => {
+					read = true;
+					return new ArrayBuffer(0);
+				}
+			}) as unknown as Response) as FetchLike;
+		const err = await fetchOpenGraph('https://public.test/big', huge).then(
+			() => null,
+			(e: unknown) => e as { status?: number; message?: string }
+		);
+		expect(err?.status).toBe(400);
+		expect(err?.message).toMatch(/too large/i);
+		expect(read).toBe(false);
+	});
+
+	it('caps a streamed body that declares no length', async () => {
+		const chunk = new Uint8Array(64 * 1024).fill(97);
+		let cancelled = false;
+		// Endless: only the cap can stop it, so buffering the whole body would
+		// hang instead of failing.
+		const stream: ReadableStream<Uint8Array> = new ReadableStream({
+			pull(controller) {
+				controller.enqueue(chunk);
+			},
+			cancel() {
+				cancelled = true;
+			}
+		});
+		const huge: FetchLike = async () =>
+			new Response(stream, { status: 200, headers: { 'Content-Type': 'text/html' } });
+		const err = await fetchOpenGraph('https://public.test/stream', huge).then(
+			() => null,
+			(e: unknown) => e as { status?: number; message?: string }
+		);
+		expect(err?.status).toBe(400);
+		expect(err?.message).toMatch(/too large/i);
+		expect(cancelled).toBe(true);
 	});
 
 	it('blocks redirect chains landing on private hosts', async () => {

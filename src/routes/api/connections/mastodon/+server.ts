@@ -17,7 +17,8 @@ import { requireSession } from '$lib/server/require';
 export const POST: RequestHandler = async ({ request, locals, cookies }) => {
 	try {
 		const user = requireSession(locals.user, locals.authMethod);
-		const body = await request.json();
+		const body = await request.json().catch(() => null);
+		if (!body || typeof body !== 'object') return fail('Invalid JSON body', 400);
 		const instanceUrl = String(body.instanceUrl || '').trim();
 		if (!instanceUrl) return fail('instanceUrl required');
 		// Local hosts are reachable only from a local instance; a real APP_URL

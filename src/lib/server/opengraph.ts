@@ -135,6 +135,41 @@ export function parseOpenGraphHtml(html: string, baseUrl: string): OpenGraphData
 	};
 }
 
+/**
+ * Read a response body up to `maxBytes`, stopping as soon as the limit is
+ * crossed. `arrayBuffer()` buffered a hostile or endless response in full
+ * before the size check could run, which can OOM the isolate (1102) instead of
+ * returning a clean 400.
+ */
+async function readCappedBody(res: Response, maxBytes: number): Promise<Uint8Array> {
+	const tooLarge = () => Object.assign(new Error('Preview response too large'), { status: 400 });
+	const declared = Number(res.headers.get('content-length') ?? '');
+	if (Number.isFinite(declared) && declared > maxBytes) throw tooLarge();
+	if (!res.body) return new Uint8Array(await res.arrayBuffer());
+	const reader = res.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			total += value.byteLength;
+			if (total > maxBytes) throw tooLarge();
+			chunks.push(value);
+		}
+	} finally {
+		// Stop a host that keeps pushing bytes after we have given up.
+		await reader.cancel().catch(() => {});
+	}
+	const bytes = new Uint8Array(total);
+	let at = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, at);
+		at += chunk.byteLength;
+	}
+	return bytes;
+}
+
 async function fetchWithRedirects(
 	url: string,
 	fetchImpl: FetchLike,
@@ -191,11 +226,7 @@ async function fetchWithRedirects(
 			});
 		}
 		const contentType = res.headers.get('content-type') || '';
-		const buf = new Uint8Array(await res.arrayBuffer());
-		if (buf.length > opts.maxBytes) {
-			throw Object.assign(new Error('Preview response too large'), { status: 400 });
-		}
-		return { finalUrl: current, bytes: buf, contentType };
+		return { finalUrl: current, bytes: await readCappedBody(res, opts.maxBytes), contentType };
 	}
 	throw Object.assign(new Error('Too many redirects'), { status: 400 });
 }

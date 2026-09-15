@@ -10,7 +10,8 @@ import { requireSession } from '$lib/server/require';
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
 		const user = requireSession(locals.user, locals.authMethod);
-		const body = await request.json();
+		const body = await request.json().catch(() => null);
+		if (!body || typeof body !== 'object') return fail('Invalid JSON body', 400);
 		const handle = String(body.handle || '').trim();
 		const appPassword = String(body.appPassword || '').trim();
 		const pdsHost = String(body.pdsHost || 'https://bsky.social').trim();

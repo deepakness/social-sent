@@ -15,6 +15,11 @@ const MAX_ALT_LENGTH = 1500;
 // Worker-memory pressure at publish (bytes are buffered ~2x).
 const MAX_FILES_PER_DRAFT = 32;
 const MAX_FILES_PER_USER = 1000;
+// A request body ceiling applied before the multipart parse: formData()
+// buffers the whole body in the isolate, and the per-file caps can only run
+// afterwards. Matches the platform's own request-body limit, so anything
+// larger is refused with a clean 413 instead of a parse-then-OOM.
+const MAX_UPLOAD_BYTES = 100_000_000;
 
 function parseSegmentIndex(value: unknown): number {
 	const n = typeof value === 'number' ? value : parseInt(String(value ?? '0'), 10);
@@ -49,6 +54,13 @@ async function ownDraft(locals: App.Locals, id: string, userId: string) {
 
 export const POST: RequestHandler = async ({ params, request, locals }) => {
 	try {
+		// Cheapest check first: refuse a body that cannot be legitimate before
+		// any query or parse runs. formData() buffers the whole multipart body
+		// in the isolate, and the per-file caps below can only run afterwards.
+		const declaredBytes = Number(request.headers.get('content-length') ?? '');
+		if (Number.isFinite(declaredBytes) && declaredBytes > MAX_UPLOAD_BYTES) {
+			return fail('Upload too large', 413);
+		}
 		const user = requireUser(locals.user);
 		requireScope(locals, 'write');
 		const draft = await ownDraft(locals, params.id, user.id);
@@ -68,8 +80,11 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 			if (entry instanceof File && entry.size > 0 && !files.includes(entry)) files.push(entry);
 		}
 		if (!files.length) return fail('file required');
-		// Reject oversized files BEFORE buffering: formData + arrayBuffer hold
-		// ~2x the bytes in Worker memory (128MB limit vs 95MB video cap).
+		// Per-file caps, ahead of the ArrayBuffer copy below: formData() already
+		// materialised the body once, and arrayBuffer() would hold a second
+		// copy (~2x the bytes in Worker memory, 128MB limit vs the 95MB video
+		// cap). The Content-Length guard above is what keeps the first copy
+		// bounded.
 		for (const f of files) {
 			const isVideo = (f.type || '').toLowerCase().startsWith('video/');
 			const cap = isVideo ? 95_000_000 : 16_000_000;

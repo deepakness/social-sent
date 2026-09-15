@@ -20,7 +20,8 @@ export const POST: RequestHandler = async ({ params, request, locals, platform }
 				.where(and(eq(drafts.id, params.id), eq(drafts.userId, user.id)))
 		);
 		if (!draft) return fail('Not found', 404);
-		const body = await request.json();
+		const body = await request.json().catch(() => null);
+		if (!body || typeof body !== 'object') return fail('Invalid JSON body', 400);
 		if (connectionIdsOverflow(body.connectionIds))
 			return fail('Too many connections (max 10)', 400);
 		const connectionIds = normalizeConnectionIds(body.connectionIds);

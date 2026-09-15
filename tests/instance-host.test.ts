@@ -43,6 +43,14 @@ describe('isBlockedInstanceHost', () => {
 	});
 	it('blocks hex IPv4-mapped IPv6 loopback', () => {
 		expect(isBlockedInstanceHost('::ffff:7f00:1')).toBe(true);
+		// Same address, written out in full: the compressed-only matcher missed
+		// this spelling entirely.
+		expect(isBlockedInstanceHost('0:0:0:0:0:ffff:7f00:1')).toBe(true);
+		expect(isBlockedInstanceHost('[0:0:0:0:0:ffff:7f00:1]')).toBe(true);
+		expect(isBlockedInstanceHost('0:0:0:0:0:ffff:a00:1')).toBe(true);
+		expect(isBlockedInstanceHost('::ffff:127.0.0.1')).toBe(true);
+		// A public v4-mapped address stays allowed.
+		expect(isBlockedInstanceHost('0:0:0:0:0:ffff:808:808')).toBe(false);
 	});
 	it('blocks octal and hex IPv4 loopback spellings', () => {
 		expect(isBlockedInstanceHost('0177.0.0.1')).toBe(true);

@@ -1,5 +1,4 @@
 import { json } from '@sveltejs/kit';
-import { humanizeError } from '$lib/domain/human-error';
 
 export function ok(data: unknown, status = 200) {
 	return json(data, { status });
@@ -16,7 +15,10 @@ export function handleError(err: unknown) {
 		return fail(message && message !== 'Server error' ? message : 'Unauthorized', 401);
 	if (status < 500) return fail(message, status >= 400 && status < 600 ? status : 400);
 	console.error(err);
-	return fail(humanizeError(message), status >= 400 && status < 600 ? status : 500);
+	// 5xx messages are ours to log, not to publish: a driver error carries SQL
+	// and table detail, and an upstream one carries response bodies. The raw
+	// text is in the log above; the client gets a plain failure.
+	return fail('Something went wrong on the server', status >= 400 && status < 600 ? status : 500);
 }
 
 export function unauthorized(): never {

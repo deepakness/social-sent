@@ -63,9 +63,12 @@ function hexWordToBytePair(word: string): [number, number] {
 }
 
 function mappedIpv6ToV4(host: string): string | null {
-	const dotted = host.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+	// Match the `ffff` group wherever it sits, not only when the address starts
+	// with it: the fully expanded `0:0:0:0:0:ffff:7f00:1` is the same address
+	// as `::ffff:7f00:1` but a `^::ffff:` anchor never saw it.
+	const dotted = host.match(/(?:^|:)ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
 	if (dotted) return dotted[1];
-	const hex = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+	const hex = host.match(/(?:^|:)ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
 	if (!hex) return null;
 	const [a, b] = hexWordToBytePair(hex[1]);
 	const [c, d] = hexWordToBytePair(hex[2]);

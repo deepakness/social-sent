@@ -1,5 +1,6 @@
 import { and, eq, inArray, type InferSelectModel } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
+import { parseDraftBody, parseDraftTitle } from '$lib/domain/validation/draft-fields';
 import { batchQueries, first } from '$lib/server/db/client';
 import {
 	connections,
@@ -91,15 +92,28 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 		if (draftHasInFlightPublish(liveTargets)) {
 			return fail('Publishing in progress — try again shortly', 409);
 		}
-		const body = await request.json();
+		const body = await request.json().catch(() => null);
+		if (!body || typeof body !== 'object') return fail('Invalid JSON body', 400);
 		const selection = normalizeSelectedConnectionIds(body.selectedConnectionIds);
 		if (!selection.ok) return fail(selection.error, 400);
+		// Validate before the UPDATE: a non-string used to reach the driver and
+		// surface as a 500, and an unbounded string was stored as-is.
+		const patch: { title?: string | null; baseBody?: string; selectedConnectionIds?: string } = {};
+		if (body.title !== undefined) {
+			const title = parseDraftTitle(body.title);
+			if (!title.ok) return fail(title.error, 400);
+			patch.title = title.value;
+		}
+		if (body.baseBody !== undefined) {
+			const text = parseDraftBody(body.baseBody);
+			if (!text.ok) return fail(text.error, 400);
+			patch.baseBody = text.value;
+		}
+		if (selection.value !== undefined) patch.selectedConnectionIds = selection.value;
 		await locals.db
 			.update(drafts)
 			.set({
-				...(body.title !== undefined ? { title: body.title } : {}),
-				...(body.baseBody !== undefined ? { baseBody: body.baseBody } : {}),
-				...(selection.value !== undefined ? { selectedConnectionIds: selection.value } : {}),
+				...patch,
 				updatedAt: new Date()
 			})
 			.where(eq(drafts.id, params.id));

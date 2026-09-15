@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 import { validatePollConfig } from '$lib/domain/poll';
+import { parseSegmentBody, parseThreadSegments } from '$lib/domain/validation/draft-fields';
 import { first, newId } from '$lib/server/db/client';
 import { drafts, draftVariants, publishTargets } from '$lib/server/db/schema';
 import { fail, handleError, ok } from '$lib/server/http';
@@ -54,9 +55,17 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 		if (!draft) return fail('Not found', 404);
 		const busy = await rejectIfPublishing(locals.db, params.id);
 		if (busy) return busy;
-		const body = await request.json();
+		const body = await request.json().catch(() => null);
+		if (!body || typeof body !== 'object') return fail('Invalid JSON body', 400);
+		if (!body || typeof body !== 'object') return fail('Invalid JSON body', 400);
 		const optionsError = validateVariantOptions(body.options);
 		if (optionsError) return fail(optionsError);
+		const segments = parseThreadSegments(body.options?.threadSegments ?? []);
+		if (!segments.ok) return fail(segments.error, 400);
+		if (body.body !== undefined) {
+			const text = parseSegmentBody(body.body);
+			if (!text.ok) return fail(text.error, 400);
+		}
 		const platform = String(body.platform || '');
 		if (
 			platform !== 'mastodon' &&

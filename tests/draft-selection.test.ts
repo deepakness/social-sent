@@ -181,3 +181,95 @@ describe('draft selected accounts', () => {
 		expect(dupBody.draft.selectedConnectionIds).toEqual([connA]);
 	});
 });
+
+describe('draft field validation', () => {
+	let db: AppDb;
+	let close: () => void;
+	let userId: string;
+	let draftId: string;
+
+	async function seed() {
+		({ db, close } = await createTestDb());
+		const now = new Date();
+		userId = newId();
+		await db.insert(users).values({
+			id: userId,
+			email: 'fields@localhost',
+			passwordHash: 'x',
+			timezone: 'UTC',
+			createdAt: now,
+			updatedAt: now
+		});
+		draftId = newId();
+		await db.insert(drafts).values({
+			id: draftId,
+			userId,
+			title: 'kept',
+			baseBody: 'original body',
+			status: 'draft',
+			createdAt: now,
+			updatedAt: now
+		});
+	}
+
+	const localsFor = () => ({
+		db,
+		media: createTestMedia(),
+		user: {
+			id: userId,
+			email: 'fields@localhost',
+			timezone: 'UTC',
+			totpEnabled: true,
+			mfaVerified: true
+		}
+	});
+
+	function patch(body: string, contentType = 'application/json') {
+		return draftPATCH({
+			params: { id: draftId },
+			request: new Request(`http://localhost/api/drafts/${draftId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': contentType },
+				body
+			}),
+			locals: localsFor()
+		} as never) as Promise<Response>;
+	}
+
+	it('answers malformed JSON with 400, not 500', async () => {
+		await seed();
+		const res = await patch('{"baseBody": ');
+		expect(res.status).toBe(400);
+		const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+		expect(row.baseBody).toBe('original body');
+		close();
+	});
+
+	it('rejects a non-string field instead of binding it to the driver', async () => {
+		await seed();
+		const res = await patch(JSON.stringify({ title: { evil: true } }));
+		expect(res.status).toBe(400);
+		const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+		expect(row.title).toBe('kept');
+		close();
+	});
+
+	it('rejects an unbounded body and keeps the stored copy', async () => {
+		await seed();
+		const res = await patch(JSON.stringify({ baseBody: 'x'.repeat(100_001) }));
+		expect(res.status).toBe(400);
+		const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+		expect(row.baseBody).toBe('original body');
+		close();
+	});
+
+	it('still accepts a normal patch', async () => {
+		await seed();
+		const res = await patch(JSON.stringify({ title: '  new title  ', baseBody: 'fresh' }));
+		expect(res.status).toBe(200);
+		const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+		expect(row.title).toBe('new title');
+		expect(row.baseBody).toBe('fresh');
+		close();
+	});
+});

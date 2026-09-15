@@ -5,7 +5,8 @@ import { enrollConfirm, MFA_COOKIE } from '$lib/server/totp';
 
 export const POST: RequestHandler = async ({ request, locals, cookies, url }) => {
 	try {
-		const body = await request.json();
+		const body = await request.json().catch(() => null);
+		if (!body || typeof body !== 'object') return fail('Invalid JSON body', 400);
 		const code = String(body.code || '');
 		const raw = cookies.get(MFA_COOKIE);
 		if (!raw) return fail('Setup expired — sign in again', 401);

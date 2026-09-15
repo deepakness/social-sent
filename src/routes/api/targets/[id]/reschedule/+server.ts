@@ -23,7 +23,8 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		const blocked = refuseInFlightOrPublished(target, now);
 		if (blocked) return fail(blocked, 409);
 		if (target.status === 'cancelled') return fail('Cancelled — retry instead');
-		const body = await request.json();
+		const body = await request.json().catch(() => null);
+		if (!body || typeof body !== 'object') return fail('Invalid JSON body', 400);
 		const runAt = body.runAt ? new Date(body.runAt) : null;
 		const runAtProblem = runAtError(body.runAt, now);
 		if (runAtProblem) return fail(runAtProblem, 400);

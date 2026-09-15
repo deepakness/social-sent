@@ -15,4 +15,12 @@ describe('handleError', () => {
 		expect(res.status).toBe(400);
 		expect(await res.json()).toEqual({ error: 'Invalid code' });
 	});
+
+	it('never echoes a 5xx cause to the client', async () => {
+		const res = handleError(new Error('D1_ERROR: no such table: publish_targets at offset 42'));
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).not.toMatch(/D1_ERROR|publish_targets/);
+		expect(body.error).toBe('Something went wrong on the server');
+	});
 });
