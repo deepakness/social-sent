@@ -20,6 +20,7 @@
 	import { slide, fly } from 'svelte/transition';
 	import { isOverSelectedPlatformLimit } from '$lib/domain/editor-limits';
 	import { humanizeError } from '$lib/domain/human-error';
+	import { platformColorClass } from '$lib/components/platform-color';
 	import {
 		BLUESKY_MAX_IMAGE_BYTES,
 		LINKEDIN_MAX_IMAGES,
@@ -266,14 +267,6 @@
 			.filter((n): n is number => typeof n === 'number' && n > 0);
 		return maxes.length ? Math.min(...maxes) : 500;
 	}
-
-	const PLATFORM_COLOR: Record<string, string> = {
-		bluesky: 'text-sky-500',
-		mastodon: 'text-indigo-500',
-		linkedin: 'text-blue-600',
-		threads: 'text-stone-900',
-		x: 'text-stone-900'
-	};
 
 	const connectedPlatforms = $derived(platformsFromConnections(connections));
 	const sortedConnections = $derived(
@@ -2052,7 +2045,7 @@
 				>
 					<SocialIcon
 						{platform}
-						className={`h-3.5 w-3.5 ${activeTab === platform ? '' : (PLATFORM_COLOR[platform] ?? 'text-stone-500')}`}
+						className={`h-3.5 w-3.5 ${activeTab === platform ? '' : platformColorClass(platform)}`}
 					/>
 					{rep?.displayName || displayHandle(rep?.handle) || platformName(platform)}
 				</button>
@@ -2441,7 +2434,7 @@
 							>
 								<SocialIcon
 									platform={account.platform}
-									className={`h-2.5 w-2.5 ${PLATFORM_COLOR[account.platform] ?? 'text-stone-500'}`}
+									className={`h-2.5 w-2.5 ${platformColorClass(account.platform)}`}
 								/>
 							</div>
 						{/each}
@@ -2641,7 +2634,7 @@
 								>
 									<SocialIcon
 										platform={account.platform}
-										className={`h-3.5 w-3.5 ${PLATFORM_COLOR[account.platform] ?? 'text-stone-500'}`}
+										className={`h-3.5 w-3.5 ${platformColorClass(account.platform)}`}
 									/>
 									{#if state?.status === 'published'}
 										<span

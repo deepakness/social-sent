@@ -11,12 +11,12 @@ import type {
 	ValidationIssue
 } from './types';
 import { ProviderError, PublishPartialError } from './types';
+import { X_MAX_GIF_BYTES, X_MAX_IMAGE_BYTES } from '$lib/domain/media-limits';
 import { providerFetch } from './timed-fetch';
 
 export const X_MAX_CHARS = 280;
 export const X_MAX_IMAGES = 4;
-export const X_MAX_IMAGE_BYTES = 5_000_000;
-export const X_MAX_GIF_BYTES = 15_000_000;
+export { X_MAX_GIF_BYTES, X_MAX_IMAGE_BYTES } from '$lib/domain/media-limits';
 const X_IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 // APPEND chunks: server max is 8MB; docs recommend <=5MB.
 const X_UPLOAD_CHUNK_BYTES = 5_000_000;

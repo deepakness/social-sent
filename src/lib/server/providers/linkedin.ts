@@ -13,11 +13,11 @@ import type {
 	ValidationIssue
 } from './types';
 import { mediaByteLength, ProviderError } from './types';
+import { LINKEDIN_MAX_IMAGE_BYTES, LINKEDIN_MAX_IMAGES } from '$lib/domain/media-limits';
 import { providerFetch } from './timed-fetch';
 
 export const LINKEDIN_MAX_CHARS = 3000;
-export const LINKEDIN_MAX_IMAGES = 4;
-export const LINKEDIN_MAX_IMAGE_BYTES = 8_000_000;
+export { LINKEDIN_MAX_IMAGE_BYTES, LINKEDIN_MAX_IMAGES } from '$lib/domain/media-limits';
 // Single mp4 per post; 95MB keeps uploads under the Worker request body limit.
 export const LINKEDIN_VIDEO_MIMES = ['video/mp4'];
 export const LINKEDIN_MAX_VIDEO_BYTES = 95_000_000;

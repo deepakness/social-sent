@@ -15,6 +15,7 @@
 		Users
 	} from '@lucide/svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import { platformColorClass } from '$lib/components/platform-color';
 	import SocialIcon from '$lib/components/SocialIcon.svelte';
 	import { displayHandle, platformName, platformRank } from '$lib/domain/platforms';
 	import { draftExcerpt } from '$lib/domain/excerpt';
@@ -235,14 +236,6 @@
 			if (pendingDelete) void commitDelete(pendingDelete.id).catch(() => {});
 		};
 	});
-
-	const PLATFORM_COLOR: Record<string, string> = {
-		mastodon: 'text-indigo-500',
-		bluesky: 'text-sky-500',
-		linkedin: 'text-blue-600',
-		threads: 'text-stone-900',
-		x: 'text-stone-900'
-	};
 
 	function toTime(value: string | Date | null | undefined): number {
 		if (!value) return Number.NEGATIVE_INFINITY;
@@ -946,7 +939,7 @@
 								>
 									<SocialIcon
 										platform={platform.name}
-										className="h-4 w-4 {PLATFORM_COLOR[platform.name] ?? 'text-stone-500'}"
+										className="h-4 w-4 {platformColorClass(platform.name)}"
 									/>
 								</a>
 							{:else}
@@ -963,7 +956,7 @@
 								>
 									<SocialIcon
 										platform={platform.name}
-										className="h-4 w-4 {PLATFORM_COLOR[platform.name] ?? 'text-stone-500'}"
+										className="h-4 w-4 {platformColorClass(platform.name)}"
 									/>
 								</div>
 							{/if}
