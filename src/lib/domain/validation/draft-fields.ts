@@ -31,8 +31,13 @@ export function parseDraftBody(value: unknown): FieldResult<string> {
 	return { ok: true, value };
 }
 
-/** Per-platform body override for a thread segment. */
-export function parseSegmentBody(value: unknown): FieldResult<string> {
+/**
+ * Per-platform body override for a thread segment. `null` is meaningful — the
+ * editor sends it to clear an override while keeping the platform's options —
+ * so it is accepted, unlike an object or a number.
+ */
+export function parseSegmentBody(value: unknown): FieldResult<string | null> {
+	if (value === null) return { ok: true, value: null };
 	if (typeof value !== 'string') return { ok: false, error: 'body must be a string' };
 	if (value.length > DRAFT_BODY_MAX_LENGTH) {
 		return { ok: false, error: `body must be ${DRAFT_BODY_MAX_LENGTH} characters or fewer` };
