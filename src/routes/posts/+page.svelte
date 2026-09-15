@@ -605,11 +605,20 @@
 		fallback: string,
 		extra?: Record<string, string>
 	): Promise<boolean> {
-		const res = await fetch('/api/targets/bulk', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ op, ids, ...extra })
-		});
+		// A rejected fetch (offline, DNS blip) must surface as a banner instead of
+		// escaping into the callers, where it skipped the busy reset and left the
+		// card's button disabled forever.
+		let res: Response;
+		try {
+			res = await fetch('/api/targets/bulk', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ op, ids, ...extra })
+			});
+		} catch {
+			error = humanizeError('fetch failed');
+			return false;
+		}
 		const payload = await res.json().catch(() => ({}));
 		if (!res.ok) {
 			error = humanizeError(payload.error || fallback);
@@ -632,8 +641,10 @@
 		pendingCancel = null;
 		busy = cardKey;
 		error = null;
-		const done = await bulkTargets('cancel', ids, 'Could not cancel');
-		busy = null;
+		// finally: the button always comes back, even if the call itself blows up.
+		const done = await bulkTargets('cancel', ids, 'Could not cancel').finally(() => {
+			busy = null;
+		});
 		if (done) await load();
 	}
 
@@ -646,8 +657,9 @@
 		if (!ids.length) return;
 		busy = cardKey;
 		error = null;
-		await bulkTargets('retry', ids, 'Retry failed');
-		busy = null;
+		await bulkTargets('retry', ids, 'Retry failed').finally(() => {
+			busy = null;
+		});
 		await load();
 	}
 
@@ -655,8 +667,9 @@
 		if (!targetId) return;
 		busyTarget = targetId;
 		error = null;
-		await bulkTargets('retry', [targetId], 'Retry failed');
-		busyTarget = null;
+		await bulkTargets('retry', [targetId], 'Retry failed').finally(() => {
+			busyTarget = null;
+		});
 		await load();
 	}
 
@@ -691,9 +704,12 @@
 		}
 		busy = cardKey;
 		error = null;
-		const done = await bulkTargets('reschedule', ids, 'Could not reschedule', { runAt });
+		const done = await bulkTargets('reschedule', ids, 'Could not reschedule', { runAt }).finally(
+			() => {
+				busy = null;
+			}
+		);
 		if (done) rescheduleId = null;
-		busy = null;
 		await load();
 	}
 

@@ -63,6 +63,9 @@
 	};
 	let keyActive = $state<KeyMeta | null>(null);
 	let keyLoading = $state(true);
+	// The stored key status actually arrived: without it a failed fetch would
+	// render "No active key" and invite a rotation that was never needed.
+	let keyLoaded = $state(false);
 	let keyBusy = $state(false);
 	let keyRevealed = $state<string | null>(null);
 	let keyCopied = $state(false);
@@ -70,45 +73,60 @@
 	let keyJustRotated = $state(false);
 	// The form stays disabled until the first load resolves: applying slow
 	// fetch results over user edits (and then saving them) would silently
-	// reset their choices.
+	// reset their choices. `prefsLoaded` separates "the request finished" from
+	// "the stored values arrived", so a failed load cannot leave the form
+	// editing — and saving — the compile-time defaults.
 	let prefsLoading = $state(true);
+	let prefsLoaded = $state(false);
 	// Client-only preference, mirrored with the editor via localStorage.
 	const SKIP_ASK_KEY = 'socialsent-skip-publish-confirm';
 	let askPublish = $state(true);
 
 	async function load() {
-		const [totp, settings, conns, key] = await Promise.all([
-			fetch('/api/auth/totp/status'),
-			fetch('/api/settings'),
-			fetch('/api/connections'),
-			fetch('/api/key')
-		]);
-		if (totp.ok) {
-			const t = await totp.json();
-			totpOn = Boolean(t.enabled);
-			backupRemaining = t.backupRemaining ?? 0;
+		if (!prefsLoaded) prefsLoading = true;
+		if (!keyLoaded) keyLoading = true;
+		err = null;
+		try {
+			const [totp, settings, conns, key] = await Promise.all([
+				fetch('/api/auth/totp/status'),
+				fetch('/api/settings'),
+				fetch('/api/connections'),
+				fetch('/api/key')
+			]);
+			if (totp.ok) {
+				const t = await totp.json();
+				totpOn = Boolean(t.enabled);
+				backupRemaining = t.backupRemaining ?? 0;
+			}
+			if (settings.ok) {
+				const s = await settings.json();
+				prefVisibility = s.settings?.mastoVisibility ?? 'public';
+				prefAccounts = s.settings?.defaultAccountIds ?? [];
+				displayName = s.displayName ?? '';
+				profilePictureUrl = s.settings?.profilePictureUrl ?? '';
+				savedDisplayName = displayName.trim();
+				pictureBroken = false;
+				prefsLoaded = true;
+			}
+			if (conns.ok) {
+				const c = await conns.json();
+				allAccounts = [...(c.connections || [])].sort(
+					(a, b) => platformRank(a.platform) - platformRank(b.platform)
+				);
+			}
+			if (key.ok) {
+				const k = await key.json();
+				keyActive = k.active;
+				keyLoaded = true;
+			}
+			// A 5xx resolves rather than rejecting, so check the status too.
+			if (!settings.ok || !key.ok) err = 'Could not load your settings';
+		} catch {
+			err = humanizeError('fetch failed');
+		} finally {
+			prefsLoading = false;
+			keyLoading = false;
 		}
-		if (settings.ok) {
-			const s = await settings.json();
-			prefVisibility = s.settings?.mastoVisibility ?? 'public';
-			prefAccounts = s.settings?.defaultAccountIds ?? [];
-			displayName = s.displayName ?? '';
-			profilePictureUrl = s.settings?.profilePictureUrl ?? '';
-			savedDisplayName = displayName.trim();
-			pictureBroken = false;
-		}
-		if (conns.ok) {
-			const c = await conns.json();
-			allAccounts = [...(c.connections || [])].sort(
-				(a, b) => platformRank(a.platform) - platformRank(b.platform)
-			);
-		}
-		if (key.ok) {
-			const k = await key.json();
-			keyActive = k.active;
-		}
-		prefsLoading = false;
-		keyLoading = false;
 	}
 
 	async function saveProfile(e: Event) {
@@ -410,7 +428,7 @@
 								pictureServerError = null;
 								isPictureDialogOpen = true;
 							}}
-							disabled={prefsLoading}
+							disabled={prefsLoading || !prefsLoaded}
 							aria-label={profilePictureUrl.trim() ? 'Edit profile picture' : 'Add profile picture'}
 							title="Edit profile picture"
 							class="absolute -right-0.5 -bottom-0.5 flex h-8 w-8 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-600 shadow-sm transition-colors hover:bg-stone-100 hover:text-stone-900 disabled:opacity-50"
@@ -432,7 +450,7 @@
 								placeholder="Your name"
 								maxlength="80"
 								autocomplete="name"
-								disabled={prefsLoading}
+								disabled={prefsLoading || !prefsLoaded}
 								class="w-full rounded-xl border border-stone-200/80 bg-stone-50 px-4 py-2.5 text-[13px] font-bold text-stone-900 shadow-sm transition-all focus:border-stone-900 focus:bg-white focus:ring-2 focus:ring-stone-900 focus:outline-none disabled:opacity-50"
 							/>
 						</div>
@@ -451,7 +469,7 @@
 				<div class="flex flex-wrap items-center gap-3 border-t border-stone-100 pt-4">
 					<button
 						type="submit"
-						disabled={profileBusy || prefsLoading || !nameDirty}
+						disabled={profileBusy || prefsLoading || !prefsLoaded || !nameDirty}
 						class="inline-flex items-center gap-2 rounded-full bg-stone-900 px-6 py-2.5 text-[13px] font-bold text-white shadow-md transition-all hover:bg-stone-800 disabled:opacity-50"
 					>
 						{prefsLoading ? 'Loading…' : 'Save Changes'}
@@ -484,7 +502,7 @@
 						<select
 							id="masto-visibility"
 							bind:value={prefVisibility}
-							disabled={prefsLoading}
+							disabled={prefsLoading || !prefsLoaded}
 							class="w-full appearance-none rounded-xl border border-stone-200/80 bg-stone-50 px-4 py-2.5 text-[13px] font-bold text-stone-900 focus:border-stone-400 focus:bg-white focus:outline-none disabled:opacity-50"
 						>
 							<option value="public">Public</option>
@@ -519,7 +537,7 @@
 							<button
 								type="button"
 								onclick={() => togglePrefAccount(a.id)}
-								disabled={prefsLoading}
+								disabled={prefsLoading || !prefsLoaded}
 								aria-pressed={isOn}
 								class="group flex w-full items-center justify-between rounded-xl border border-transparent p-2 text-left transition-colors hover:border-stone-100 hover:bg-stone-50 disabled:opacity-50"
 							>
@@ -597,12 +615,21 @@
 				</div>
 
 				<div class="flex items-center gap-3 border-t border-stone-100 pt-4">
-					<button
-						type="submit"
-						disabled={prefBusy || prefsLoading}
-						class="rounded-full bg-stone-900 px-6 py-2.5 text-[13px] font-bold text-white shadow-md transition-all hover:bg-stone-800 disabled:opacity-50"
-						>{prefsLoading ? 'Loading…' : 'Save defaults'}</button
-					>
+					{#if !prefsLoading && !prefsLoaded}
+						<button
+							type="button"
+							onclick={() => void load()}
+							class="rounded-full border border-stone-300 px-6 py-2.5 text-[13px] font-bold text-stone-700 transition-colors hover:bg-stone-100"
+							>Retry</button
+						>
+					{:else}
+						<button
+							type="submit"
+							disabled={prefBusy || prefsLoading || !prefsLoaded}
+							class="rounded-full bg-stone-900 px-6 py-2.5 text-[13px] font-bold text-white shadow-md transition-all hover:bg-stone-800 disabled:opacity-50"
+							>{prefsLoading ? 'Loading…' : 'Save defaults'}</button
+						>
+					{/if}
 					{#if prefSaved}
 						<span class="text-[13px] font-bold text-emerald-600">{prefSaved}</span>
 					{/if}
@@ -701,6 +728,16 @@
 						Revoke
 					</button>
 				</div>
+			{:else if !keyLoaded}
+				<div class="rounded-xl border border-stone-200/80 bg-stone-50/50 p-4">
+					<p class="text-[13px] font-medium text-stone-500">Could not load your API key status.</p>
+				</div>
+				<button
+					type="button"
+					onclick={() => void load()}
+					class="rounded-full border border-stone-300 px-6 py-2.5 text-[13px] font-bold text-stone-700 transition-colors hover:bg-stone-100"
+					>Retry</button
+				>
 			{:else}
 				<div
 					class="mb-5 rounded-xl border border-stone-200/80 bg-stone-50/50 p-4"

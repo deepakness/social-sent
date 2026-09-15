@@ -163,6 +163,10 @@
 	// URL id of a draft whose load is in flight. Autosave waits for it so a
 	// keystroke typed during a slow load cannot create a second draft.
 	let loadingDraftId = $state<string | null>(null);
+	// Set when a draft fetch fails: while it is non-null every save path stays
+	// off, so an editor that never received the stored copy cannot PATCH an
+	// empty (or partial) body over it. Cleared by a successful load.
+	let loadFailedId = $state<string | null>(null);
 	// Serial queue of media-layout writes (see queueMediaSync). Publish awaits
 	// it because the stored segmentIndex — not the optimistic UI order — is
 	// what the provider attaches images by.
@@ -546,6 +550,7 @@
 		dirty = false;
 		saveStatus = 'idle';
 		savedSnapshot = null;
+		loadFailedId = null;
 		storedVariants = new Set();
 	}
 
@@ -573,8 +578,15 @@
 		loadingDraftId = id;
 		try {
 			const res = await fetch(`/api/drafts/${id}`);
-			if (!res.ok) return;
+			if (!res.ok) {
+				// The stored copy never arrived. Keep saving off until it does:
+				// otherwise the first keystroke autosaves an empty body over it.
+				loadFailedId = id;
+				showToast('Could not load this draft', 'error');
+				return;
+			}
 			const data = await res.json();
+			loadFailedId = null;
 			if (page.url.searchParams.get('id') !== id) return;
 			const d = data.draft;
 			if (before && draftId !== null && draftId !== id) {
@@ -671,6 +683,11 @@
 			}
 			// Otherwise the local edits stay dirty on purpose: the autosave
 			// effect below persists the merged content once the load settles.
+		} catch (err) {
+			// Network failure or an unparseable body: same protection as a 4xx.
+			loadFailedId = id;
+			showToast('Could not load this draft', 'error');
+			throw err;
 		} finally {
 			if (loadingDraftId === id) loadingDraftId = null;
 		}
@@ -825,6 +842,9 @@
 		allowEmpty = false,
 		opts: { navigate?: boolean } = {}
 	): Promise<string | null> {
+		// Backstop for every caller (autosave, Cmd+S, publish, schedule,
+		// beforeunload): never write a draft whose stored copy never loaded.
+		if (loadFailedId) return null;
 		const emptyNew = !draftId && !baseBody.trim();
 		if (emptyNew && !allowEmpty) return null;
 		// Nothing changed since the last successful save: skip the round trips.
@@ -915,6 +935,10 @@
 		// Fast empty check before opening any UI: mirrors doPersist's
 		// emptyNew guard so an empty composer toasts without flashing the
 		// dialog (or the publishing spinner in skip-ask mode).
+		if (loadFailedId) {
+			showToast('Could not load this draft — retry before publishing', 'warn');
+			return;
+		}
 		if (!draftId && !baseBody.trim()) {
 			showToast('Nothing to publish', 'warn');
 			return;
@@ -1255,6 +1279,10 @@
 		const runAt = scheduleValueToIso(scheduleCombined, now);
 		if (!runAt) {
 			showToast('Pick a time in the future', 'warn');
+			return;
+		}
+		if (loadFailedId) {
+			showToast('Could not load this draft — retry before scheduling', 'warn');
 			return;
 		}
 		publishing = true;
@@ -1871,6 +1899,9 @@
 	});
 
 	$effect(() => {
+		// A draft that failed to load must not be baselined as "saved": that is
+		// what turned the empty editor into an autosave target.
+		if (loadFailedId) return;
 		if (savedSnapshot === null) {
 			savedSnapshot = takeSnapshot();
 			return;
@@ -1964,6 +1995,28 @@
 	data-testid="thread-preview"
 >
 	<h1 class="sr-only">Compose post</h1>
+	{#if loadFailedId}
+		<div
+			role="alert"
+			data-testid="draft-load-error"
+			class="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200/70 bg-amber-50/60 px-4 py-3"
+		>
+			<p class="min-w-0 flex-1 text-[13px] font-medium text-amber-900">
+				This draft could not be loaded. Saving is paused so an empty editor cannot overwrite the
+				stored copy.
+			</p>
+			<button
+				type="button"
+				onclick={() => {
+					const id = loadFailedId;
+					if (id) void loadDraft(id);
+				}}
+				class="rounded-full border border-amber-300 bg-white px-4 py-1.5 text-[12px] font-bold text-amber-900 transition-colors hover:bg-amber-100"
+			>
+				Retry
+			</button>
+		</div>
+	{/if}
 	<!-- Platform Tabs (Always visible) -->
 	<div class="relative mb-8 flex flex-wrap items-center gap-2 pt-2">
 		<!-- Global Tab -->
