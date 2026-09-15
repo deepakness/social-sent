@@ -79,7 +79,7 @@ npx wrangler secret put NOTIFY_EMAIL
 npx wrangler secret put NOTIFY_FROM
 ```
 
-Instead of typing these one by one, `npm run secrets:put` uploads every value it finds in `.dev.vars` (and `.api-token` for `API_TOKEN`). It refuses to upload a localhost `APP_URL`.
+Instead of typing these one by one, `npm run secrets:put` uploads the keys it manages from `.dev.vars` (and `.api-token` for `API_TOKEN`). That allowlist covers the app's own secrets — the notification variables above are not in it, set them yourself. It refuses to upload a localhost `APP_URL`.
 
 ### 3. Deploy
 
@@ -137,7 +137,7 @@ Because your changes live in files upstream never touches, `git pull upstream ma
 
 ## Script / app API
 
-The browser UI uses the `sent_session` cookie after TOTP. Scripts, Shortcuts, and cron use a personal API key instead — no login, no cookies. Manage it in **Settings → API access** (generate, rotate, revoke); the raw key is shown once and only its hash is stored. A full reference with copyable examples lives in-app at `/api`.
+The browser UI uses the `sent_session` cookie after TOTP. Scripts, Shortcuts, and cron use a personal API key instead — no login, no cookies. Manage it in **Settings → API access** (generate, rotate, revoke); the raw key is shown once and only its hash is stored. Worked examples for the common calls live in-app at `/api`.
 
 ```sh
 export APP_URL=https://socialsent.<account>.workers.dev
@@ -172,13 +172,13 @@ Without these, those connect buttons report "not configured" — Mastodon and Bl
 
 ## Platforms
 
-| Platform | Auth                                            | Text                       | Images                                 | Threads                      |
-| -------- | ----------------------------------------------- | -------------------------- | -------------------------------------- | ---------------------------- |
-| Mastodon | OAuth (per instance)                            | instance max (default 500) | 4, 16MB                                | yes                          |
-| Bluesky  | handle + app password                           | 300                        | 4, 1MB                                 | yes                          |
-| LinkedIn | OAuth (`openid profile email w_member_social`)  | 3000                       | 4, 8MB (no WebP)                       | no — flattened into one post |
-| Threads  | OAuth (`threads_basic threads_content_publish`) | 500, max 5 links           | 4 uploadable, 10 allowed, 8MB JPEG/PNG | yes                          |
-| X        | OAuth 2.0 + PKCE                                | 280, max 1 cashtag         | 4, 5MB (15MB GIF)                      | yes                          |
+| Platform | Auth                                                                     | Text                       | Images                                 | Threads                      |
+| -------- | ------------------------------------------------------------------------ | -------------------------- | -------------------------------------- | ---------------------------- |
+| Mastodon | OAuth (per instance)                                                     | instance max (default 500) | 4, 16MB                                | yes                          |
+| Bluesky  | handle + app password                                                    | 300                        | 4, 1MB                                 | yes                          |
+| LinkedIn | OAuth (`openid profile email w_member_social`)                           | 3000                       | 4, 8MB (no WebP)                       | no — flattened into one post |
+| Threads  | OAuth (`threads_basic threads_content_publish` `threads_manage_replies`) | 500, max 5 links           | 4 uploadable, 10 allowed, 8MB JPEG/PNG | yes                          |
+| X        | OAuth 2.0 + PKCE                                                         | 280, max 1 cashtag         | 4, 5MB (15MB GIF)                      | yes                          |
 
 Threads images are served to Meta via short-lived signed URLs (2h expiry, never linked publicly). Meta's crawler intermittently fails to fetch a URL that works moments later (subcode 2207052), so media containers retry with a freshly signed URL and the failure stays retryable; a custom public media origin can be configured with `MEDIA_PUBLIC_BASE_URL` (for example an R2 custom domain behind Cloudflare's cache) to skip the Worker hop entirely. LinkedIn rejects WebP at publish time — upload JPEG/PNG/GIF.
 
@@ -187,7 +187,7 @@ Threads images are served to Meta via short-lived signed URLs (2h expiry, never 
 - Typefully-style thread editor (cards, images + alt, Main + per-platform tabs)
 - Publish now (sync results + retry) or schedule
 - Cancel / reschedule / retry from Posts
-- Retryable failures (network, rate limits, Meta's media crawler) reschedule themselves with backoff and keep retrying automatically; only terminal errors park as Failed
+- Retryable failures (network, rate limits, Meta's media crawler) reschedule themselves with backoff, up to 5 attempts; after that — or on a terminal error — the target parks as Failed
 - Disconnect keeps published history (archive) and returns waiting drafts
 - Dashboard failure banner plus an optional daily failure-digest email
 - Credentials encrypted at rest (AES-256-GCM)

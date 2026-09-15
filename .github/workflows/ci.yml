@@ -23,6 +23,10 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Dependency audit
+        # Fails on high/critical advisories. Low-severity ones that only reach
+        # dev tooling (and have no upstream fix) stay below the threshold.
+        run: npm audit --audit-level=high
       - run: npm test
       - run: npm run check
       - run: npm run lint
