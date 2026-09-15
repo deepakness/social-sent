@@ -170,10 +170,20 @@ export async function ensureTargets(
 	now: Date = new Date()
 ): Promise<EnsuredTarget[]> {
 	const variants = await db.select().from(draftVariants).where(eq(draftVariants.draftId, draftId));
+	// One read for the whole draft instead of one per connection: D1 counts
+	// statements, and a ten-account publish should not spend ten of its fifty
+	// before it starts.
+	const allRows = await db.select().from(publishTargets).where(eq(publishTargets.draftId, draftId));
+	const byConnection = new Map<string, PublishTargetRow[]>();
+	for (const row of allRows) {
+		const list = byConnection.get(row.connectionId);
+		if (list) list.push(row);
+		else byConnection.set(row.connectionId, [row]);
+	}
 	const out: EnsuredTarget[] = [];
 
 	for (const conn of conns) {
-		let rows = await loadTargets(db, draftId, conn.id);
+		let rows = byConnection.get(conn.id) ?? [];
 		let winner = pickTargetWinner(rows);
 		if (winner) await cancelSiblings(db, rows, winner.id, now);
 
@@ -199,6 +209,8 @@ export async function ensureTargets(
 				continue;
 			} catch (err) {
 				if (!isUniqueConstraintError(err)) throw err;
+				// Another writer inserted the row between our read and this
+				// insert: re-read just this connection and reuse theirs.
 				rows = await loadTargets(db, draftId, conn.id);
 				winner = pickTargetWinner(rows);
 				if (!winner) throw err;
