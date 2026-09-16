@@ -228,7 +228,14 @@ export async function enrollConfirm(db: AppDb, env: AppEnv, rawToken: string, co
 		.delete(mfaChallenges)
 		.where(and(eq(mfaChallenges.userId, user.id), eq(mfaChallenges.kind, challenge.kind)));
 	await revokeOtherSessions(db, user.id);
-	const session = await createSession(db, env, user.id, challenge.remember, true);
+	const session = await createSession(
+		db,
+		env,
+		user.id,
+		challenge.remember,
+		true,
+		user.passwordHash
+	);
 	return {
 		user: { id: user.id, email: user.email, timezone: user.timezone },
 		...session
@@ -264,7 +271,14 @@ export async function verifyMfa(db: AppDb, env: AppEnv, rawToken: string, code: 
 			.where(eq(users.id, user.id));
 		await db.delete(mfaChallenges).where(eq(mfaChallenges.id, challenge.id));
 		await clearAuthGate(db, env, user.id, 'totp-gate');
-		const session = await createSession(db, env, user.id, challenge.remember, true);
+		const session = await createSession(
+			db,
+			env,
+			user.id,
+			challenge.remember,
+			true,
+			user.passwordHash
+		);
 		return { user: { id: user.id, email: user.email }, ...session, usedBackup: false };
 	}
 
@@ -283,7 +297,14 @@ export async function verifyMfa(db: AppDb, env: AppEnv, rawToken: string, code: 
 				.where(eq(totpBackupCodes.id, match.id));
 			await db.delete(mfaChallenges).where(eq(mfaChallenges.id, challenge.id));
 			await clearAuthGate(db, env, user.id, 'totp-gate');
-			const session = await createSession(db, env, user.id, challenge.remember, true);
+			const session = await createSession(
+				db,
+				env,
+				user.id,
+				challenge.remember,
+				true,
+				user.passwordHash
+			);
 			return { user: { id: user.id, email: user.email }, ...session, usedBackup: true };
 		}
 	}

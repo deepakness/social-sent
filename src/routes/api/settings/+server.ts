@@ -1,10 +1,12 @@
 import { eq } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 import { normalizeProfileSettings, parseProfileSettings } from '$lib/domain/profile-settings';
+import { parseInstanceName } from '$lib/domain/instance-name';
 import { first } from '$lib/server/db/client';
 import { users } from '$lib/server/db/schema';
 import { fail, handleError, ok } from '$lib/server/http';
 import { requireScope, requireUser } from '$lib/server/require';
+import { readStoredAppName, rememberAppName } from '$lib/server/app-settings';
 
 export const GET: RequestHandler = async ({ locals }) => {
 	try {
@@ -18,7 +20,9 @@ export const GET: RequestHandler = async ({ locals }) => {
 		);
 		return ok({
 			settings: parseProfileSettings(row?.settingsJson ?? null),
-			displayName: row?.displayName ?? null
+			displayName: row?.displayName ?? null,
+			// The effective name: what Settings → Instance should show.
+			instanceName: (await readStoredAppName(locals.db)) ?? locals.env.APP_NAME
 		});
 	} catch (err) {
 		return handleError(err);
@@ -57,12 +61,24 @@ export const PATCH: RequestHandler = async ({ request, locals }) => {
 			body !== null &&
 			typeof body === 'object' &&
 			Object.hasOwn(body as Record<string, unknown>, 'displayName');
+		const hasInstanceName =
+			body !== null &&
+			typeof body === 'object' &&
+			Object.hasOwn(body as Record<string, unknown>, 'instanceName');
 		const display = normalizeDisplayName(
 			hasName ? (body as Record<string, unknown>).displayName : undefined
+		);
+		const instanceName = parseInstanceName(
+			hasInstanceName ? (body as Record<string, unknown>).instanceName : undefined
 		);
 		// Absent key = leave the stored name alone (older clients only send
 		// visibility/defaults). Present key (incl. empty) sets or clears it.
 		if (hasName && !display.ok) return fail('Invalid display name', 400);
+		if (hasInstanceName && !instanceName.ok) return fail('Invalid instance name', 400);
+		if (hasInstanceName && instanceName.ok) {
+			// One write of its own: the instance name is not a user setting.
+			await rememberAppName(locals.db, instanceName.name ?? '');
+		}
 		await locals.db
 			.update(users)
 			.set({
@@ -74,7 +90,11 @@ export const PATCH: RequestHandler = async ({ request, locals }) => {
 		const row = await first(
 			locals.db.select({ displayName: users.displayName }).from(users).where(eq(users.id, user.id))
 		);
-		return ok({ settings: normalized.settings, displayName: row?.displayName ?? null });
+		return ok({
+			settings: normalized.settings,
+			displayName: row?.displayName ?? null,
+			instanceName: (await readStoredAppName(locals.db)) ?? locals.env.APP_NAME
+		});
 	} catch (err) {
 		return handleError(err);
 	}

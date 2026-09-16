@@ -44,19 +44,18 @@
 	],
 	"r2_buckets": [
 		{
-			"binding": "MEDIA"
-			// No bucket_name on purpose: Wrangler derives one from the Worker name
-			// and provisions it (an empty string is a config error, not "unset").
-			// Your own deployment names its bucket in wrangler.personal.jsonc.
+			"binding": "MEDIA",
+			// R2 bucket names are globally unique across all Cloudflare accounts,
+			// so this is a starting point rather than a promise: change it in
+			// `wrangler.personal.jsonc` (or in the "Deploy to Cloudflare" form)
+			// if it is taken. Wrangler creates the bucket when it is missing.
+			"bucket_name": "socialsent-media"
 		}
 	],
-	// Non-secret vars only. Keys, passwords and OAuth client secrets belong in
-	// Worker secrets (`npm run secrets:put`), because a deploy overwrites vars
-	// with whatever this file says.
-	"vars": {
-		"APP_NAME": "SocialSent",
-		// Run the scheduled handler. scripts/wrap-worker.mjs no-ops it without
-		// this, so a trigger left over from an older config cannot run the tick.
-		"ENABLE_CF_CRON": "1"
-	}
+	// No vars: the instance name is set in the app (Settings → Instance) and
+	// falls back to "SocialSent", and the scheduled handler runs whenever the
+	// trigger fires. Keys, passwords and OAuth client secrets belong in Worker
+	// secrets (`npm run secrets:put`), because a deploy overwrites vars with
+	// whatever this file says.
+	"vars": {}
 }

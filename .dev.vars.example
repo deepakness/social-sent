@@ -1,5 +1,14 @@
 # Copy to .dev.vars for local `npm run dev`
 #
+# Required, and the only secret a deployment has to bring. Generate one with
+# `openssl rand -hex 32` — it encrypts the provider tokens stored in D1, and
+# AUTH_SECRET and SCHEDULER_SECRET are derived from it (see below). It cannot be
+# generated at deploy time: a copy stored next to the data it protects would
+# make a database leak a full takeover. The "Deploy to Cloudflare" form asks for
+# it and will not deploy while it is empty.
+# Example (never deploy it): deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+APP_ENCRYPTION_KEY=
+
 # Optional. A deployment cannot know its own URL before it exists, so the app
 # uses the origin of the request it is serving; set this only to pin a custom
 # domain or a deliberate public origin. Local dev needs nothing here — the
@@ -7,16 +16,16 @@
 # device (a LAN address) does not count as local: generate real keys for that.
 # APP_URL=http://localhost:5173
 
-# Instance name shown in the UI (title, header, login screen).
-# Can also be set as a Worker var — see wrangler.jsonc.
+# Optional. The instance name is set in the app (Settings → Instance) and falls
+# back to "SocialSent"; the var still works for config-file deployments.
 # APP_NAME=SocialSent
 
-# Generate your own:  openssl rand -hex 32
-# The only secret a deployment has to bring. AUTH_SECRET and SCHEDULER_SECRET
-# are derived from it (see below), and it encrypts the provider tokens stored in
-# D1 — so it cannot be generated at runtime, and rotating it means reconnecting
-# every account. The value below is a deliberate placeholder. Never deploy it.
-APP_ENCRYPTION_KEY=deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+# Optional login override. Leave both empty and the account is created in the
+# browser on the first visit, then managed in Settings → Login. Set both to keep
+# the login in Worker secrets instead (`npm run secrets:put`) — a deploy
+# overwrites `vars` from wrangler.jsonc, so they cannot live there.
+# ADMIN_EMAIL=
+# ADMIN_PASSWORD=
 
 # Both derived from APP_ENCRYPTION_KEY when unset, so leave them empty unless
 # you want them independent. AUTH_SECRET signs sessions (changing it signs
@@ -24,11 +33,6 @@ APP_ENCRYPTION_KEY=deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadb
 # something outside the Worker — an external pinger — has to hold it.
 # AUTH_SECRET=
 # SCHEDULER_SECRET=
-
-# Login identity. On a deployed Worker keep BOTH of these as Worker secrets
-# (`npm run secrets:put`) — a deploy overwrites `vars` from wrangler.jsonc.
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=change-me
 
 # Optional. Scripts send: Authorization: Bearer $API_TOKEN (min 16 chars)
 # API_TOKEN=

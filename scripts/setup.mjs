@@ -18,7 +18,7 @@
 //   npm run setup -- --yes              # no prompts: generates secrets, prints them once
 //   npm run setup -- --skip-deploy      # everything except the deploy
 //   npm run setup -- --rotate-secrets   # also overwrite APP_ENCRYPTION_KEY (rotates the derived secrets too)
-//   npm run setup -- --set-admin        # also overwrite ADMIN_EMAIL/ADMIN_PASSWORD
+//   npm run setup -- --set-admin        # also overwrite ADMIN_EMAIL/ADMIN_PASSWORD (secrets-managed login)
 //   npm run setup -- --name my-sent --bucket my-sent-media --db my-sent
 //   npm run setup -- --admin-email you@example.com --admin-password '…'
 //
@@ -359,24 +359,15 @@ async function main() {
 	}
 	const uploads = {};
 
-	const existingPassword = reusable('ADMIN_PASSWORD');
-	const suggestedPassword = existingPassword ?? generateHex(12);
-	const adminEmail = await ask(
-		'Admin email (the login)',
-		value('--admin-email', null) ?? reusable('ADMIN_EMAIL') ?? 'admin@example.com'
-	);
-	const adminPasswordFlag = value('--admin-password', null);
-	const adminPassword = await ask(
-		existingPassword
-			? 'Admin password (leave empty to keep the current one)'
-			: 'Admin password (pick a long one)',
-		adminPasswordFlag ?? suggestedPassword
-	);
+	// The login is created in the browser on the first visit unless the operator
+	// asks for the secrets-managed variant (values in .dev.vars, or the flags).
+	const adminEmail = value('--admin-email', null) ?? reusable('ADMIN_EMAIL');
+	const adminPassword = value('--admin-password', null) ?? reusable('ADMIN_PASSWORD');
+	const wantsEnvLogin = Boolean(adminEmail && adminPassword);
 
 	for (const [key, fallback] of Object.entries({
 		APP_ENCRYPTION_KEY: () => reusable('APP_ENCRYPTION_KEY') ?? generateHex(),
-		ADMIN_EMAIL: () => adminEmail,
-		ADMIN_PASSWORD: () => adminPassword
+		...(wantsEnvLogin ? { ADMIN_EMAIL: () => adminEmail, ADMIN_PASSWORD: () => adminPassword } : {})
 	})) {
 		const wantsOverwrite = key.startsWith('ADMIN_') ? SET_ADMIN : ROTATE_SECRETS;
 		if (existingSecrets.has(key) && !wantsOverwrite) {
@@ -404,7 +395,9 @@ async function main() {
 		writeDevVars(uploads);
 		info(`wrote the generated values to ${DEV_VARS}`);
 	}
-	const generatedPassword = !existingPassword && adminPassword === suggestedPassword;
+	if (!wantsEnvLogin && !DRY) {
+		info('no ADMIN_EMAIL/ADMIN_PASSWORD — the account is created in the browser on first visit');
+	}
 
 	// 6. Build, then migrations against the real database.
 	say('6. Build and migrations');
@@ -479,8 +472,10 @@ Next:
 	if (!DRY) {
 		console.log(`
 Next:
-  1. Open ${siteUrl || 'your Worker URL'} and sign in with ${adminEmail}
-     ${generatedPassword ? `password: ${adminPassword}  (also in ${DEV_VARS})` : ''}
+  1. Open ${siteUrl || 'your Worker URL'} and ${
+		wantsEnvLogin ? `sign in as ${adminEmail}` : 'create the account (any email and password)'
+	}
+     ${wantsEnvLogin ? '' : 'It can be changed later in Settings → Login.'}
   2. Enrol an authenticator app when asked, and save the backup codes.
   3. Connect accounts (Accounts → Connect new).
   4. Scheduled posts publish themselves: the Worker's cron trigger runs every

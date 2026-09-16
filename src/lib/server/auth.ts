@@ -9,7 +9,7 @@ import {
 } from '$lib/domain/session-cookie';
 import { randomHex } from '$lib/domain/bytes';
 import { envCredentialsMatch } from '$lib/domain/env-credentials';
-import { hashPassword, hmacHex } from './crypto';
+import { hashPassword, hmacHex, verifyPassword } from './crypto';
 import { first, newId, type AppDb } from './db/client';
 import { sessions, users } from './db/schema';
 import type { AppEnv } from './env';
@@ -52,11 +52,44 @@ export async function hashToken(raw: string, secret: string): Promise<string> {
 	return hmacHex(secret, `session:${raw}`);
 }
 
-// Binds a session to the password that minted it: rotating ADMIN_PASSWORD
-// invalidates every outstanding session on next use (previously they lived
-// on until expiry). Compared in constant structure, never logged.
-export async function sessionPasswordFp(env: AppEnv): Promise<string> {
-	return hmacHex(env.AUTH_SECRET, `pwd-fp:${env.ADMIN_PASSWORD}`);
+/**
+ * Where the login comes from. Both secrets set means the operator manages it
+ * from Worker secrets (`npm run secrets:put`); neither means the single account
+ * lives in D1 — claimed in the browser on first run, changed in Settings after
+ * that. envFromPlatform rejects a half-configured pair.
+ */
+export function hasEnvCredentials(env: AppEnv): boolean {
+	return Boolean(env.ADMIN_EMAIL && env.ADMIN_PASSWORD);
+}
+
+// Binds a session to the password that minted it: changing the password
+// invalidates every outstanding session on next use (previously they lived on
+// until expiry). A D1-managed account is bound to the stored hash; the prefix
+// keeps the two derivations from ever colliding. Never logged.
+export async function passwordFingerprint(
+	env: AppEnv,
+	passwordHash?: string | null
+): Promise<string> {
+	if (hasEnvCredentials(env)) return hmacHex(env.AUTH_SECRET, `pwd-fp:${env.ADMIN_PASSWORD}`);
+	return hmacHex(env.AUTH_SECRET, `pwd-fp:hash:${passwordHash ?? ''}`);
+}
+
+/** True while the instance has no account at all: first run, before the claim. */
+export async function needsSetup(db: AppDb, env: AppEnv): Promise<boolean> {
+	if (hasEnvCredentials(env)) return false;
+	const row = await first(db.select({ id: users.id }).from(users).limit(1));
+	return !row;
+}
+
+/** The single account: bootstrapped from env credentials when those are set,
+ *  otherwise whatever the claim created. Null before the claim. */
+export async function getAdminUser(
+	db: AppDb,
+	env: AppEnv,
+	d1?: object
+): Promise<Awaited<ReturnType<typeof ensureAdminUser>> | null> {
+	if (hasEnvCredentials(env)) return ensureAdminUser(db, env, d1);
+	return (await first(db.select().from(users).limit(1))) ?? null;
 }
 
 // Tracks (binding, admin email) pairs already swept for stray users. A changed
@@ -66,13 +99,19 @@ export async function sessionPasswordFp(env: AppEnv): Promise<string> {
 const sweptAdminBindings = new WeakMap<object, Set<string>>();
 
 export async function ensureAdminUser(db: AppDb, env: AppEnv, d1?: object) {
-	let existing = await first(db.select().from(users).where(eq(users.email, env.ADMIN_EMAIL)));
+	if (!hasEnvCredentials(env)) {
+		throw new Error('ensureAdminUser needs ADMIN_EMAIL and ADMIN_PASSWORD');
+	}
+	// Both are present past the guard; the schema rejects a half-configured pair.
+	const email = env.ADMIN_EMAIL ?? '';
+	const password = env.ADMIN_PASSWORD ?? '';
+	let existing = await first(db.select().from(users).where(eq(users.email, email)));
 	if (!existing) {
 		const now = new Date();
 		const row = {
 			id: newId(),
-			email: env.ADMIN_EMAIL,
-			passwordHash: await hashPassword(env.ADMIN_PASSWORD),
+			email,
+			passwordHash: await hashPassword(password),
 			displayName: null,
 			timezone: 'UTC',
 			createdAt: now,
@@ -87,15 +126,15 @@ export async function ensureAdminUser(db: AppDb, env: AppEnv, d1?: object) {
 			await db.insert(users).values(row);
 			existing = row;
 		} catch {
-			existing = await first(db.select().from(users).where(eq(users.email, env.ADMIN_EMAIL)));
+			existing = await first(db.select().from(users).where(eq(users.email, email)));
 		}
 	}
 	if (!existing) throw new Error('Failed to bootstrap admin user');
 	const swept = d1 ? (sweptAdminBindings.get(d1) ?? new Set<string>()) : null;
-	if (!swept?.has(env.ADMIN_EMAIL)) {
-		await db.delete(users).where(ne(users.email, env.ADMIN_EMAIL));
+	if (!swept?.has(email)) {
+		await db.delete(users).where(ne(users.email, email));
 		if (d1 && swept) {
-			swept.add(env.ADMIN_EMAIL);
+			swept.add(email);
 			sweptAdminBindings.set(d1, swept);
 		}
 	}
@@ -107,7 +146,8 @@ export async function createSession(
 	env: AppEnv,
 	userId: string,
 	remember = true,
-	mfaVerified = false
+	mfaVerified = false,
+	passwordHash?: string | null
 ): Promise<{ raw: string; maxAge: number }> {
 	const raw = randomHex(32);
 	const token = await hashToken(raw, env.AUTH_SECRET);
@@ -121,7 +161,7 @@ export async function createSession(
 		remember,
 		mfaVerified,
 		createdAt: now,
-		pwdFp: await sessionPasswordFp(env),
+		pwdFp: await passwordFingerprint(env, passwordHash),
 		lastSeenAt: now
 	});
 	return { raw, maxAge };
@@ -170,7 +210,8 @@ export async function getSessionUser(
 				email: users.email,
 				timezone: users.timezone,
 				totpEnabled: users.totpEnabled,
-				mfaVerified: sessions.mfaVerified
+				mfaVerified: sessions.mfaVerified,
+				passwordHash: users.passwordHash
 			})
 			.from(sessions)
 			.innerJoin(users, eq(sessions.userId, users.id))
@@ -185,7 +226,7 @@ export async function getSessionUser(
 	}
 	// Password rotation kills outstanding sessions. Rows minted before the
 	// fingerprint column existed (NULL) are backfilled once instead.
-	const fp = await sessionPasswordFp(env);
+	const fp = await passwordFingerprint(env, row.passwordHash);
 	if (row.pwdFp && row.pwdFp !== fp) {
 		await db.delete(sessions).where(eq(sessions.id, row.sessionId));
 		return null;
@@ -230,11 +271,25 @@ export async function authenticatePassword(
 	email: string,
 	password: string
 ) {
-	if (!envCredentialsMatch(email, password, env.ADMIN_EMAIL, env.ADMIN_PASSWORD)) return null;
-	await ensureAdminUser(db, env);
-	const user = await first(db.select().from(users).where(eq(users.email, env.ADMIN_EMAIL)));
+	if (hasEnvCredentials(env)) {
+		if (!envCredentialsMatch(email, password, env.ADMIN_EMAIL ?? '', env.ADMIN_PASSWORD ?? '')) {
+			return null;
+		}
+		await ensureAdminUser(db, env);
+		const row = await first(
+			db
+				.select()
+				.from(users)
+				.where(eq(users.email, env.ADMIN_EMAIL ?? ''))
+		);
+		return row ?? null;
+	}
+	// D1-managed: the row is the account, and the email is stored lowercased.
+	const user = await first(
+		db.select().from(users).where(eq(users.email, email.trim().toLowerCase()))
+	);
 	if (!user) return null;
-	return user;
+	return (await verifyPassword(password, user.passwordHash)) ? user : null;
 }
 
 export async function purgeExpiredSessions(db: AppDb) {

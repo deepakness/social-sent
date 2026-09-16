@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { formatDistanceToNow } from 'date-fns';
 	import { onMount } from 'svelte';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { Pencil, User } from '@lucide/svelte';
 	import AccountAvatar from '$lib/components/AccountAvatar.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -8,6 +9,7 @@
 	import { sessionExpiredIfUnauthorized } from '$lib/components/session-expired';
 	import { accountLabel, displayHandle, platformRank } from '$lib/domain/platforms';
 	import { isValidProfilePictureUrl, PROFILE_PICTURE_URL_MAX } from '$lib/domain/profile-settings';
+	import { INSTANCE_NAME_MAX } from '$lib/domain/instance-name';
 
 	let { data } = $props();
 	let msg = $state<string | null>(null);
@@ -36,6 +38,16 @@
 	let prefSaved = $state<string | null>(null);
 	let prefBusy = $state(false);
 	let displayName = $state('');
+	let instanceName = $state('');
+	let savedInstanceName = $state('');
+	let instanceBusy = $state(false);
+	let accountEmail = $state('');
+	let accountManaged = $state(false);
+	let accountPassword = $state('');
+	let accountNewPassword = $state('');
+	let accountConfirm = $state('');
+	let accountBusy = $state(false);
+	let accountLoading = $state(true);
 	let profilePictureUrl = $state('');
 	// The name the server last accepted: the profile form's Save button stays
 	// disabled until the draft drifts from it. The picture is not tracked here
@@ -88,14 +100,15 @@
 		if (!keyLoaded) keyLoading = true;
 		err = null;
 		try {
-			const [totp, settings, conns, key] = await Promise.all([
+			const [totp, settings, conns, key, account] = await Promise.all([
 				fetch('/api/auth/totp/status'),
 				fetch('/api/settings'),
 				fetch('/api/connections'),
-				fetch('/api/key')
+				fetch('/api/key'),
+				fetch('/api/account')
 			]);
 			// An expired session is not a broken setting: sign in again.
-			if ([totp, settings, conns, key].some((res) => sessionExpiredIfUnauthorized(res))) {
+			if ([totp, settings, conns, key, account].some((res) => sessionExpiredIfUnauthorized(res))) {
 				err = 'Your session expired — sign in again';
 				return;
 			}
@@ -109,6 +122,8 @@
 				prefVisibility = s.settings?.mastoVisibility ?? 'public';
 				prefAccounts = s.settings?.defaultAccountIds ?? [];
 				displayName = s.displayName ?? '';
+				instanceName = s.instanceName ?? '';
+				savedInstanceName = instanceName.trim();
 				profilePictureUrl = s.settings?.profilePictureUrl ?? '';
 				savedDisplayName = displayName.trim();
 				pictureBroken = false;
@@ -125,6 +140,12 @@
 				keyActive = k.active;
 				keyLoaded = true;
 			}
+			if (account.ok) {
+				const a = await account.json();
+				accountEmail = a.email ?? '';
+				accountManaged = Boolean(a.managedByEnv);
+				accountLoading = false;
+			}
 			// A 5xx resolves rather than rejecting, so check the status too.
 			if (!settings.ok || !key.ok) err = 'Could not load your settings';
 		} catch {
@@ -132,6 +153,7 @@
 		} finally {
 			prefsLoading = false;
 			keyLoading = false;
+			accountLoading = false;
 		}
 	}
 
@@ -161,6 +183,72 @@
 	}
 
 	/** Same rules as the server, so a typo never costs the user their other edits. */
+	async function saveInstanceName(e: Event) {
+		e.preventDefault();
+		const name = instanceName.trim();
+		if (name.length > INSTANCE_NAME_MAX) {
+			err = `Keep the instance name under ${INSTANCE_NAME_MAX} characters`;
+			return;
+		}
+		instanceBusy = true;
+		err = null;
+		try {
+			const res = await fetch('/api/settings', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ instanceName: name })
+			});
+			const payload = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(payload.error || 'Could not save');
+			instanceName = payload.instanceName ?? name;
+			savedInstanceName = instanceName.trim();
+			msg = 'Instance name saved';
+			// The title and header come from the layout, which reads the stored
+			// name: refresh them without a full reload.
+			await invalidateAll();
+		} catch (e) {
+			err = humanizeError(e instanceof Error ? e.message : 'Could not save');
+		} finally {
+			instanceBusy = false;
+		}
+	}
+	async function saveAccount(e: Event) {
+		e.preventDefault();
+		err = null;
+		if (accountNewPassword && accountNewPassword !== accountConfirm) {
+			err = 'New passwords do not match';
+			return;
+		}
+		accountBusy = true;
+		try {
+			const res = await fetch('/api/account', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					currentPassword: accountPassword,
+					email: accountEmail.trim(),
+					...(accountNewPassword ? { newPassword: accountNewPassword } : {})
+				})
+			});
+			const payload = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(payload.error || 'Could not save');
+			accountPassword = '';
+			accountNewPassword = '';
+			accountConfirm = '';
+			accountEmail = payload.email ?? accountEmail;
+			if (payload.reauth) {
+				// The password change revoked every session, including this one.
+				await goto('/login');
+				return;
+			}
+			msg = 'Login updated';
+		} catch (e) {
+			err = humanizeError(e instanceof Error ? e.message : 'Could not save');
+		} finally {
+			accountBusy = false;
+		}
+	}
+
 	function pictureUrlError(value: string): string | null {
 		const trimmed = value.trim();
 		if (!trimmed) return null;
@@ -895,6 +983,108 @@
 						>
 					</form>
 				</div>
+			{/if}
+		</div>
+
+		<div
+			class="rounded-[2rem] border border-stone-200/80 bg-white p-6 shadow-[0_8px_30px_-12px_rgb(28_25_23/0.06)] sm:p-8"
+		>
+			<h2 class="mb-2 text-[17px] font-extrabold tracking-tight text-stone-900">Instance</h2>
+			<p class="mb-6 max-w-md text-[13px] leading-relaxed font-medium text-stone-500">
+				Shown in the page title, the header and the login screen. Leave it empty for the default.
+			</p>
+			<form class="flex flex-col gap-3 sm:flex-row sm:items-center" onsubmit={saveInstanceName}>
+				<input
+					type="text"
+					bind:value={instanceName}
+					maxlength={INSTANCE_NAME_MAX}
+					placeholder="SocialSent"
+					aria-label="Instance name"
+					class="w-full flex-1 rounded-xl border border-stone-200/80 bg-stone-50 px-4 py-2.5 text-[13px] font-bold text-stone-900 focus:border-stone-400 focus:bg-white focus:outline-none"
+				/>
+				<button
+					type="submit"
+					disabled={instanceBusy || instanceName.trim() === savedInstanceName}
+					class="w-full shrink-0 rounded-full bg-stone-900 px-6 py-2.5 text-[13px] font-bold text-white shadow-md transition-all hover:bg-stone-800 disabled:opacity-50 sm:w-auto"
+					>Save</button
+				>
+			</form>
+		</div>
+
+		<div
+			class="rounded-[2rem] border border-stone-200/80 bg-white p-6 shadow-[0_8px_30px_-12px_rgb(28_25_23/0.06)] sm:p-8"
+		>
+			<h2 class="mb-2 text-[17px] font-extrabold tracking-tight text-stone-900">Login</h2>
+			<p class="mb-6 max-w-md text-[13px] leading-relaxed font-medium text-stone-500">
+				The email and password used to sign in. Changing the password signs out every device.
+			</p>
+			{#if accountLoading}
+				<p class="text-[13px] font-medium text-stone-500">Loading…</p>
+			{:else if accountManaged}
+				<p class="rounded-xl bg-stone-50 px-3 py-2 text-[13px] font-medium text-stone-600">
+					This instance manages the login with the <code>ADMIN_EMAIL</code> and
+					<code>ADMIN_PASSWORD</code> Worker secrets, so it is changed there (<code
+						>npm run secrets:put</code
+					>) rather than here.
+				</p>
+			{:else}
+				<form class="space-y-4" onsubmit={saveAccount}>
+					<label class="block text-sm">
+						<span class="text-[11px] font-bold tracking-widest text-stone-500 uppercase">Email</span
+						>
+						<input
+							type="email"
+							autocomplete="username"
+							bind:value={accountEmail}
+							class="mt-1.5 w-full rounded-xl border border-stone-200/80 bg-stone-50 px-4 py-2.5 text-[13px] font-bold text-stone-900 focus:border-stone-400 focus:bg-white focus:outline-none"
+							required
+						/>
+					</label>
+					<label class="block text-sm">
+						<span class="text-[11px] font-bold tracking-widest text-stone-500 uppercase"
+							>Current password</span
+						>
+						<input
+							type="password"
+							autocomplete="current-password"
+							bind:value={accountPassword}
+							class="mt-1.5 w-full rounded-xl border border-stone-200/80 bg-stone-50 px-4 py-2.5 text-[13px] font-bold text-stone-900 focus:border-stone-400 focus:bg-white focus:outline-none"
+							required
+						/>
+					</label>
+					<div class="flex flex-col gap-4 sm:flex-row">
+						<label class="block flex-1 text-sm">
+							<span class="text-[11px] font-bold tracking-widest text-stone-500 uppercase"
+								>New password</span
+							>
+							<input
+								type="password"
+								autocomplete="new-password"
+								minlength="8"
+								bind:value={accountNewPassword}
+								placeholder="Leave empty to keep"
+								class="mt-1.5 w-full rounded-xl border border-stone-200/80 bg-stone-50 px-4 py-2.5 text-[13px] font-bold text-stone-900 focus:border-stone-400 focus:bg-white focus:outline-none"
+							/>
+						</label>
+						<label class="block flex-1 text-sm">
+							<span class="text-[11px] font-bold tracking-widest text-stone-500 uppercase"
+								>Confirm</span
+							>
+							<input
+								type="password"
+								autocomplete="new-password"
+								bind:value={accountConfirm}
+								class="mt-1.5 w-full rounded-xl border border-stone-200/80 bg-stone-50 px-4 py-2.5 text-[13px] font-bold text-stone-900 focus:border-stone-400 focus:bg-white focus:outline-none"
+							/>
+						</label>
+					</div>
+					<button
+						type="submit"
+						disabled={accountBusy}
+						class="self-start rounded-full bg-stone-900 px-6 py-2.5 text-[13px] font-bold text-white shadow-md transition-all hover:bg-stone-800 disabled:opacity-50"
+						>Save login</button
+					>
+				</form>
 			{/if}
 		</div>
 	</div>

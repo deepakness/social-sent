@@ -10,7 +10,7 @@ import type { AppDb } from './client';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const TEST_ENV: AppEnv = {
+export const TEST_ENV: AppEnv & { ADMIN_EMAIL: string; ADMIN_PASSWORD: string } = {
 	APP_URL: 'http://localhost:5173',
 	appUrlSource: 'configured',
 	APP_NAME: 'SocialSent',

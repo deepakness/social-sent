@@ -18,8 +18,11 @@ const envSchema = z.object({
 	// Derived from APP_ENCRYPTION_KEY when unset (see derived-secrets.ts): set it
 	// only to pin an independent value.
 	AUTH_SECRET: z.string().min(16).optional(),
-	ADMIN_EMAIL: z.string().min(3),
-	ADMIN_PASSWORD: z.string().min(8),
+	// Both or neither. Set them to manage the login from Worker secrets; leave
+	// them unset and the single account is claimed in the browser on first run
+	// and managed from Settings afterwards (see auth.ts).
+	ADMIN_EMAIL: z.string().min(3).optional(),
+	ADMIN_PASSWORD: z.string().min(8).optional(),
 	// Derived from APP_ENCRYPTION_KEY when unset. Set it when something outside
 	// the Worker has to hold it, such as an external tick pinger.
 	SCHEDULER_SECRET: z.string().min(32).optional(),
@@ -87,6 +90,14 @@ export function readAppEnv(
 	if (!parsed.success) {
 		const msg = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
 		throw new Error(`Invalid environment: ${msg}`);
+	}
+	// Half a login is a misconfiguration, not a mode: say so instead of locking
+	// the operator out with "invalid credentials".
+	if (Boolean(parsed.data.ADMIN_EMAIL) !== Boolean(parsed.data.ADMIN_PASSWORD)) {
+		throw new Error(
+			'Invalid environment: set both ADMIN_EMAIL and ADMIN_PASSWORD, or neither ' +
+				'(leaving both unset means the account is claimed in the browser instead)'
+		);
 	}
 	// Fail closed anywhere that is not a local instance: example values from
 	// .dev.vars.example must never reach a public deployment, where a

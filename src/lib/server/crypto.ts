@@ -3,11 +3,21 @@ import {
 	bytesToBase64,
 	hexToBytes,
 	randomBytes,
+	timingSafeEqual,
 	utf8Bytes
 } from '$lib/domain/bytes';
 
-/** Workers Web Crypto rejects PBKDF2 iteration counts above 100_000. */
-const PBKDF2_ITERS = 100_000;
+/**
+ * Workers Web Crypto rejects PBKDF2 iteration counts above 100_000, and the
+ * Workers Free plan gives a request 10 ms of CPU — 100k iterations alone used
+ * all of it (measured ~11 ms), so a login backed by a stored hash failed with
+ * "exceeded CPU time" on Free. 25k fits the budget with room for the rest of
+ * the request; the login gate (eight attempts, then a 15-minute lockout) and
+ * the fact that the hash never leaves D1 carry the rest. `verifyPassword` reads
+ * the count from the stored value, so hashes made at the old count keep working
+ * and the number can be raised later without invalidating anyone.
+ */
+const PBKDF2_ITERS = 25_000;
 const TAG_BYTES = 16;
 
 async function sha256(data: Uint8Array): Promise<Uint8Array> {
@@ -85,6 +95,37 @@ export async function hashPassword(password: string): Promise<string> {
 		256
 	);
 	return `pbkdf2$${PBKDF2_ITERS}$${bytesToBase64(salt)}$${bytesToBase64(new Uint8Array(bits))}`;
+}
+
+/** Verify a `hashPassword` value. Constant-time on the derived bits. */
+export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+	const parts = stored.split('$');
+	if (parts.length !== 4 || parts[0] !== 'pbkdf2') return false;
+	const iterations = Number.parseInt(parts[1], 10);
+	if (!Number.isInteger(iterations) || iterations < 1 || iterations > 1_000_000) return false;
+	const salt = base64ToBytes(parts[2]);
+	const expected = base64ToBytes(parts[3]);
+	if (salt.length === 0 || expected.length === 0) return false;
+	const key = await crypto.subtle.importKey(
+		'raw',
+		utf8Bytes(password) as BufferSource,
+		'PBKDF2',
+		false,
+		['deriveBits']
+	);
+	const bits = new Uint8Array(
+		await crypto.subtle.deriveBits(
+			{
+				name: 'PBKDF2',
+				hash: 'SHA-256',
+				salt: salt as BufferSource,
+				iterations
+			},
+			key,
+			expected.length * 8
+		)
+	);
+	return timingSafeEqual(expected, bits);
 }
 
 export async function hmacHex(secret: string, value: string): Promise<string> {

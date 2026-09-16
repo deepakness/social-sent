@@ -5,7 +5,9 @@ import { spawnSync } from 'node:child_process';
 const keys = process.argv.slice(2);
 // The app derives AUTH_SECRET and SCHEDULER_SECRET from APP_ENCRYPTION_KEY and
 // takes APP_URL from the request, so those three are only uploaded when they are
-// deliberately set locally (the loop below skips anything absent).
+// deliberately set locally (the loop below skips anything absent). ADMIN_EMAIL
+// and ADMIN_PASSWORD are the optional secrets-managed login: upload them
+// together to keep the account out of D1's reach.
 const wanted = keys.length
 	? keys
 	: [

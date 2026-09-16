@@ -25,7 +25,7 @@ Write a draft, optionally customize per platform, then publish now or schedule. 
 
 ```sh
 cp .dev.vars.example .dev.vars
-# edit ADMIN_EMAIL, ADMIN_PASSWORD, APP_ENCRYPTION_KEY
+# generate APP_ENCRYPTION_KEY (`openssl rand -hex 32`); it is the only one needed
 # optional: API_TOKEN for script access (min 16 chars)
 
 npm install
@@ -33,7 +33,7 @@ npm run db:migrate:local
 npm run dev
 ```
 
-Open http://localhost:5173 and sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.dev.vars`. Those values are the live login — change `.dev.vars` and restart to change the password. The D1 user row is only an ID for drafts and connections.
+Open http://localhost:5173 and create the account on the first visit (any email and password you like) — the login lives in D1 and is changed in **Settings → Login**. Setting `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.dev.vars` keeps the login in env instead, which is useful for throwaway test databases.
 
 First sign-in asks you to enroll an authenticator (Google Authenticator or any TOTP app). Save the backup codes. For friction-free local dev, set `SKIP_TOTP=1` in `.dev.vars` — 2FA is skipped entirely, and the flag is honored only while the instance resolves to a localhost URL, so it can never disable 2FA on a real host. Remove it (and restart) to go back to real 2FA.
 
@@ -57,7 +57,7 @@ Cloudflare clones this repo into your own GitHub account, creates the Worker, **
 
 Nothing needs to be configured for the URL: a deployment cannot know it before the Worker exists, so the app uses the origin each request arrives on (and remembers it for the cron tick, which has no request of its own). Set `APP_URL` only to pin a deliberate origin.
 
-The example secrets do have to go: the setup page asks for `APP_ENCRYPTION_KEY`, `ADMIN_EMAIL` and `ADMIN_PASSWORD`, and a deployment that kept the example ones answers 503 rather than running on a publicly-known key. That is the whole list — the other secrets are derived, and scheduled posts publish themselves through the cron trigger in `wrangler.jsonc`.
+The form asks for exactly one secret, `APP_ENCRYPTION_KEY`. Paste a value from `openssl rand -hex 32` (the field starts empty, and the deploy is refused while it is); everything else is derived or set in the app afterwards. The login is created on your first visit, and scheduled posts publish themselves through the cron trigger in `wrangler.jsonc`.
 
 What it cannot do — two things you finish by hand:
 
@@ -70,7 +70,7 @@ What it cannot do — two things you finish by hand:
 npm run setup
 ```
 
-It signs in through `wrangler login` (no API token to mint), creates the D1 database and R2 bucket if they are missing, generates `APP_ENCRYPTION_KEY` and the admin login, writes them to `.dev.vars` and to the Worker, applies the migrations, deploys, and pins `APP_URL` to the URL it just deployed to — when the deploy prints one; otherwise it prints the command to set it yourself. (You can also skip that: an unset `APP_URL` follows the host each request arrives on.)
+It signs in through `wrangler login` (no API token to mint), creates the D1 database and R2 bucket if they are missing, generates `APP_ENCRYPTION_KEY`, writes it to `.dev.vars` and to the Worker, applies the migrations, deploys, and pins `APP_URL` to the URL it just deployed to — when the deploy prints one; otherwise it prints the command to set it yourself. (You can also skip that: an unset `APP_URL` follows the host each request arrives on.)
 
 **It is safe to re-run, and it will not damage a running deployment.** Resources that exist are reused, a `database_id` already in your config is never replaced, and any secret already set on the Worker is left alone — rotating `APP_ENCRYPTION_KEY` orphans every stored credential, and changing `ADMIN_EMAIL` deletes the old user row and everything cascading from it, so neither happens by accident. Pass `--rotate-secrets` or `--set-admin` when that is what you want. `npm run setup -- --dry-run` prints the plan and only performs read-only calls.
 
@@ -93,12 +93,10 @@ These must be Worker secrets, not `[vars]`: a deploy overwrites `vars` with what
 
 ```sh
 node scripts/wrangler.mjs secret put APP_ENCRYPTION_KEY   # openssl rand -hex 32
-node scripts/wrangler.mjs secret put ADMIN_EMAIL
-node scripts/wrangler.mjs secret put ADMIN_PASSWORD
 node scripts/wrangler.mjs secret put API_TOKEN            # openssl rand -hex 32
 ```
 
-That is the whole list: `AUTH_SECRET` and `SCHEDULER_SECRET` are derived from `APP_ENCRYPTION_KEY`, and `APP_URL` is derived from the request — see [Secrets](#secrets). Optional extras:
+That is the whole list: `AUTH_SECRET` and `SCHEDULER_SECRET` are derived from `APP_ENCRYPTION_KEY`, `APP_URL` is derived from the request, and the login is created on the first visit — see [Secrets](#secrets). Optional extras:
 
 ```sh
 # Public media origin for Meta's crawler (an R2 custom domain behind Cloudflare's cache)
@@ -111,17 +109,17 @@ node scripts/wrangler.mjs secret put NOTIFY_FROM
 
 Instead of typing these one by one, `npm run secrets:put` uploads the keys it manages from `.dev.vars` (and `.api-token` for `API_TOKEN`). That allowlist covers the app's own secrets — the notification variables above are not in it, set them yourself. It refuses to upload a localhost `APP_URL`.
 
-### 3. Deploy
+#### 3. Deploy
 
 ```sh
-npm run deploy
+npm run build && npm run deploy
 ```
 
-`npm run deploy` runs unit tests, applies remote D1 migrations, builds, and deploys the Worker. Worker-only: `npm run deploy:worker`.
+`npm run build` produces the Worker bundle and `npm run deploy` uploads it — the same split Workers Builds uses on every push. `npm run deploy:release` runs the whole path in one go: unit tests, remote D1 migrations, build, deploy.
 
 ### Scheduling
 
-Scheduled posts save to D1 and are published by a per-minute cron trigger, which `wrangler.jsonc` ships enabled (`"triggers"`, plus `ENABLE_CF_CRON=1` in `vars` — the wrapper no-ops the scheduled handler without it, so a leftover trigger cannot run the tick twice). The Workers free plan allows five cron triggers per account; each run gets the plan's CPU budget, the same one an HTTP tick gets, so a tick that runs out of budget leaves the rest due for the next minute.
+Scheduled posts save to D1 and are published by a per-minute cron trigger, which `wrangler.jsonc` ships enabled (`"triggers"`). The handler is a no-op when there is nothing to authenticate the tick with, so an instance without either secret simply does not publish on a schedule. The Workers free plan allows five cron triggers per account; each run gets the plan's CPU budget, the same one an HTTP tick gets, so a tick that runs out of budget leaves the rest due for the next minute.
 
 To drive the tick from something else instead — cron-job.org, a Raspberry Pi, a systemd timer, the bundled GitHub Actions workflow, a different cadence on a paid plan — POST to:
 
@@ -139,7 +137,7 @@ A tick publishes as many due targets as it can inside D1's per-invocation statem
 
 Ticks are idempotent, so an extra caller is safe rather than harmful — but there is no reason to run a per-minute pinger alongside the cron. Keep one primary tick and, at most, the throttled GitHub backup.
 
-To change the cadence, edit `triggers.crons` in `wrangler.jsonc` (`*/5 * * * *` and friends are fine on the free plan too). To use no trigger at all, delete the `triggers` block and the `ENABLE_CF_CRON` var: the Worker ignores scheduled runs unless that var is `1`, so removing one before the other cannot double-fire the tick.
+To change the cadence, edit `triggers.crons` in `wrangler.jsonc` (`*/5 * * * *` and friends are fine on the free plan too). To use no trigger at all, delete the `triggers` block and point a pinger at the endpoint instead.
 
 ### Failure alerts (optional)
 
@@ -147,30 +145,24 @@ The dashboard shows a "failed to publish" banner linking to the Failed tab. To a
 
 ### Changing the login later
 
-There is no in-app password form; update the Worker secret:
+**Settings → Login** changes the email or the password (the current password is required, and changing it signs every device out). That works on the default, D1-managed login.
 
-```sh
-node scripts/wrangler.mjs secret put ADMIN_PASSWORD
-```
-
-Changing `ADMIN_EMAIL` is a bigger deal: the app keeps exactly one user row and deletes any user whose email is not `ADMIN_EMAIL`, so the old row (and everything cascading from it — drafts, connections, sessions) is removed on the next request. Change it deliberately, and expect to reconnect your accounts.
+If you set `ADMIN_EMAIL` / `ADMIN_PASSWORD` as Worker secrets, those stay authoritative and the Settings card says so: update them with `node scripts/wrangler.mjs secret put ADMIN_PASSWORD`. Changing `ADMIN_EMAIL` is a bigger deal — the app keeps exactly one user row and sweeps any row whose email differs, so the old row (and everything cascading from it) is removed on the next request. Delete both secrets to go back to the in-app login; the existing row keeps working.
 
 ## Updating
 
 ```sh
 git pull                     # or: git pull upstream main, if you deployed from the button
 npm ci
-npm run db:migrate:remote    # applies any new migrations to your D1 database
-npm run deploy
+npm run deploy:release       # unit tests, remote D1 migrations, build, deploy
 ```
 
-`APP_NAME`, `APP_URL` and the rest of your configuration live in `wrangler.personal.jsonc` and Worker secrets, so a pull never overwrites them. Deploying from the button instead? Push the same changes to your own copy (or pull from upstream first) and Workers Builds takes it from there.
+`APP_URL`, the instance name and the rest of your configuration live in `wrangler.personal.jsonc`, Worker secrets and D1, so a pull never overwrites them. Deploying from the button instead? Push the same changes to your own copy (or pull from upstream first) and Workers Builds takes it from there.
 
 One exception: because a personal config replaces the committed one, a config change upstream does not reach your deployment. Updating from a checkout that predates the built-in scheduler? Add these two keys to `wrangler.personal.jsonc` or scheduled posts stay silent:
 
 ```jsonc
-"triggers": { "crons": ["* * * * *"] },
-"vars": { "APP_NAME": "SocialSent", "ENABLE_CF_CRON": "1" }
+"triggers": { "crons": ["* * * * *"] }
 ```
 
 ## Keeping your own deployment separate from upstream
@@ -187,7 +179,7 @@ Because your changes live in files upstream never touches, `git pull upstream ma
 
 ## Naming your instance
 
-`APP_NAME` (a plain `[vars]` entry, default `SocialSent`) is shown in the page title, the header, and the login screen. Set it to whatever you like — the outbound `User-Agent`, the Mastodon app name, cookies, and API-key prefixes stay fixed so upgrades keep working.
+The instance name — shown in the page title, the header, and the login screen — is set in **Settings → Instance** and stored in D1, so it needs no redeploy. `APP_NAME` (a plain `[vars]` entry, default `SocialSent`) is the fallback for deployments that would rather keep it in config. The outbound `User-Agent`, the Mastodon app name, cookies, and API-key prefixes stay fixed so upgrades keep working.
 
 `APP_URL` (a Worker secret, not a var) is the instance's public origin. It is optional: left unset, the app uses the origin each request arrives on and remembers the first authenticated one, which is how a deployment works without knowing its URL in advance. Set it to pin a deliberate origin — a custom domain, or the hostname OAuth redirect URIs and signed media URLs must use. A pinned value does not follow a hostname change, so update it if you move.
 
@@ -197,7 +189,7 @@ Because your changes live in files upstream never touches, `git pull upstream ma
 
 `AUTH_SECRET` (signs sessions and OAuth state) and `SCHEDULER_SECRET` (the tick bearer) are derived from it with HMAC-SHA256, so there is nothing else to invent or keep in sync. Set either one explicitly to override the derivation, and delete it to go back. Changing `AUTH_SECRET` signs everybody out. You need `SCHEDULER_SECRET` only when something outside the Worker has to hold the tick bearer, such as an external pinger (see [Scheduling](#scheduling)).
 
-`ADMIN_EMAIL` and `ADMIN_PASSWORD` are the login. On a deployed Worker keep them as Worker secrets, never as vars: a deploy overwrites `vars` with whatever `wrangler.jsonc` says.
+The login has two modes. Left unset, the account is created in the browser on the first visit and lives in D1 — changed in **Settings → Login**. Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` (both or neither, as Worker secrets rather than vars) and they stay authoritative instead; the sweep then removes any other user row. Someone else reaching a fresh instance before you can claim it, so set them, or claim it immediately after deploying.
 
 ## Script / app API
 

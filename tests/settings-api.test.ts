@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { users } from '$lib/server/db/schema';
 import { newId, type AppDb } from '$lib/server/db/client';
-import { createTestDb } from '$lib/server/db/test';
+import { createTestDb, TEST_ENV } from '$lib/server/db/test';
 import { GET as settingsGET, PATCH as settingsPATCH } from '../src/routes/api/settings/+server';
 
 describe('settings api', () => {
@@ -10,6 +10,7 @@ describe('settings api', () => {
 	let userId: string;
 	const localsFor = (id: string) => ({
 		db,
+		env: TEST_ENV,
 		user: { id, email: 'settings@localhost', timezone: 'UTC', totpEnabled: true, mfaVerified: true }
 	});
 
@@ -33,7 +34,8 @@ describe('settings api', () => {
 		expect(first.status).toBe(200);
 		expect(await first.json()).toEqual({
 			settings: { mastoVisibility: 'public', defaultAccountIds: [], profilePictureUrl: '' },
-			displayName: null
+			displayName: null,
+			instanceName: TEST_ENV.APP_NAME
 		});
 
 		const bad = (await settingsPATCH({
@@ -57,13 +59,15 @@ describe('settings api', () => {
 		expect(patched.status).toBe(200);
 		expect(await patched.json()).toEqual({
 			settings: { mastoVisibility: 'private', defaultAccountIds: ['c1'], profilePictureUrl: '' },
-			displayName: null
+			displayName: null,
+			instanceName: TEST_ENV.APP_NAME
 		});
 
 		const again = (await settingsGET({ locals: localsFor(userId) } as never)) as Response;
 		expect(await again.json()).toEqual({
 			settings: { mastoVisibility: 'private', defaultAccountIds: ['c1'], profilePictureUrl: '' },
-			displayName: null
+			displayName: null,
+			instanceName: TEST_ENV.APP_NAME
 		});
 
 		const named = (await settingsPATCH({
@@ -81,7 +85,8 @@ describe('settings api', () => {
 		expect(named.status).toBe(200);
 		expect(await named.json()).toEqual({
 			settings: { mastoVisibility: 'private', defaultAccountIds: ['c1'], profilePictureUrl: '' },
-			displayName: 'Bikash'
+			displayName: 'Bikash',
+			instanceName: TEST_ENV.APP_NAME
 		});
 
 		const badName = (await settingsPATCH({
@@ -175,5 +180,27 @@ describe('settings api', () => {
 		expect(clearedBody.displayName).toBe('Sudhir R');
 		expect(clearedBody.settings.profilePictureUrl).toBe('');
 		expect(clearedBody.settings.mastoVisibility).toBe('direct');
+	});
+
+	it('stores and clears the instance name', async () => {
+		const patch = (body: Record<string, unknown>) =>
+			settingsPATCH({
+				locals: localsFor(userId),
+				request: new Request('http://localhost/api/settings', {
+					method: 'PATCH',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(body)
+				})
+			} as never) as Promise<Response>;
+		const named = await patch({ instanceName: '  My Sent  ' });
+		expect(named.status).toBe(200);
+		expect((await named.json()).instanceName).toBe('My Sent');
+		const read = (await settingsGET({ locals: localsFor(userId) } as never)) as Response;
+		expect((await read.json()).instanceName).toBe('My Sent');
+		const tooLong = await patch({ instanceName: 'x'.repeat(61) });
+		expect(tooLong.status).toBe(400);
+		// Blank clears the override and the APP_NAME default comes back.
+		const cleared = await patch({ instanceName: '' });
+		expect((await cleared.json()).instanceName).toBe(TEST_ENV.APP_NAME);
 	});
 });

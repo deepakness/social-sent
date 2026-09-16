@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { decryptJson, decryptSecret, encryptJson, encryptSecret } from '$lib/server/crypto';
+import {
+	decryptJson,
+	decryptSecret,
+	encryptJson,
+	encryptSecret,
+	hashPassword,
+	verifyPassword
+} from '$lib/server/crypto';
 
 const KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
@@ -20,5 +27,36 @@ describe('crypto', () => {
 	it('rejects tampered payload', async () => {
 		const enc = await encryptSecret('hello', KEY);
 		await expect(decryptSecret(enc.slice(0, -2) + 'aa', KEY)).rejects.toThrow();
+	});
+});
+
+describe('password hashes', () => {
+	it('verifies the password it hashed and nothing else', async () => {
+		const hash = await hashPassword('correct horse battery staple');
+		expect(hash.startsWith('pbkdf2$')).toBe(true);
+		expect(await verifyPassword('correct horse battery staple', hash)).toBe(true);
+		expect(await verifyPassword('correct horse battery stapl', hash)).toBe(false);
+		expect(await verifyPassword('', hash)).toBe(false);
+	});
+
+	it('salts every hash, so the same password never hashes the same way', async () => {
+		const a = await hashPassword('same password');
+		const b = await hashPassword('same password');
+		expect(a).not.toBe(b);
+		expect(await verifyPassword('same password', a)).toBe(true);
+		expect(await verifyPassword('same password', b)).toBe(true);
+	});
+
+	it('refuses malformed or truncated stored values instead of throwing', async () => {
+		for (const stored of [
+			'',
+			'not-a-hash',
+			'pbkdf2$100000$aaaa',
+			'pbkdf2$notanumber$aaaa$bbbb',
+			'pbkdf2$0$aaaa$bbbb',
+			'pbkdf2$100000$$bbbb'
+		]) {
+			expect(await verifyPassword('whatever', stored)).toBe(false);
+		}
 	});
 });

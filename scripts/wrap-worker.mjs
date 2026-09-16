@@ -49,7 +49,6 @@ async function socialsentInternal(worker, env, ctx, path, body) {
 export default {
 	fetch: (...args) => worker_default.fetch(...args),
 	scheduled(controller, env, ctx) {
-		if (env.ENABLE_CF_CRON !== '1') return;
 		// The internal call authenticates as a pinger would; with nothing to
 		// authenticate with it is a no-op rather than a 401 every minute.
 		if (!env.SCHEDULER_SECRET && !env.API_TOKEN && !env.APP_ENCRYPTION_KEY) return;

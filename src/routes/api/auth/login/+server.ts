@@ -1,5 +1,5 @@
 import type { RequestHandler } from './$types';
-import { authenticatePassword, createSession, ensureAdminUser } from '$lib/server/auth';
+import { authenticatePassword, createSession, getAdminUser } from '$lib/server/auth';
 import { assertAuthGateOpen, clearAuthGate, recordAuthGateFailure } from '$lib/server/auth-gate';
 import { setMfaCookie, setSessionCookie } from '$lib/server/cookies';
 import { fail, handleError, ok } from '$lib/server/http';
@@ -13,12 +13,14 @@ export const POST: RequestHandler = async ({ request, locals, cookies, url }) =>
 		const password = String(body.password || '');
 		const remember = body.remember !== false;
 		if (!email || !password) return fail('Email and password required');
-		const admin = await ensureAdminUser(locals.db, locals.env);
+		// Env credentials bootstrap the row; otherwise this is the claimed one.
+		const admin = await getAdminUser(locals.db, locals.env);
+		if (!admin) return fail('This instance has no account yet', 409);
 		// The gate is keyed on the single admin row, so an unknown email must not
 		// advance it — otherwise anyone can lock the real owner out with eight
 		// guesses at a made-up address. Only a wrong password for the actual
 		// admin identity counts.
-		const knownEmail = email.trim().toLowerCase() === locals.env.ADMIN_EMAIL.trim().toLowerCase();
+		const knownEmail = email.trim().toLowerCase() === admin.email.trim().toLowerCase();
 		await assertAuthGateOpen(locals.db, locals.env, admin.id, 'password');
 		const user = await authenticatePassword(locals.db, locals.env, email, password);
 		if (!user) {
@@ -31,7 +33,14 @@ export const POST: RequestHandler = async ({ request, locals, cookies, url }) =>
 		await clearAuthGate(locals.db, locals.env, admin.id, 'password');
 		if (locals.env.skipTotp) {
 			// Local dev: password is the whole login. Mint a verified session.
-			const { raw, maxAge } = await createSession(locals.db, locals.env, user.id, remember, true);
+			const { raw, maxAge } = await createSession(
+				locals.db,
+				locals.env,
+				user.id,
+				remember,
+				true,
+				user.passwordHash
+			);
 			setSessionCookie(cookies, locals.env, url.host, raw, maxAge);
 			return ok({ user: { id: user.id, email: user.email } });
 		}

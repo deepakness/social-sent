@@ -56,18 +56,18 @@ interface Env {
 	 *  the origin of each request and remembers the first authenticated one;
 	 *  set it to pin a custom domain. See $lib/domain/app-url. */
 	APP_URL?: string;
-	/** Set to "1" to let scripts/wrap-worker.mjs run the scheduler on a cron
-	 *  trigger. Unset, scheduled invocations are a no-op. */
-	ENABLE_CF_CRON?: string;
-	/** Instance display name shown in the UI. Defaults to "SocialSent". */
+	/** Instance display name shown in the UI, when not overridden in
+	 *  Settings → Instance (which is stored in D1). Defaults to "SocialSent". */
 	APP_NAME?: string;
 	/** The only secret a deployment must bring: it encrypts the stored provider
 	 *  tokens, and AUTH_SECRET/SCHEDULER_SECRET are derived from it. */
 	APP_ENCRYPTION_KEY: string;
 	/** Derived from APP_ENCRYPTION_KEY when unset (see derived-secrets.ts). */
 	AUTH_SECRET?: string;
-	ADMIN_EMAIL: string;
-	ADMIN_PASSWORD: string;
+	/** Optional secrets-managed login: set both (env credentials then stay
+	 *  authoritative) or neither, and the account is claimed in the browser. */
+	ADMIN_EMAIL?: string;
+	ADMIN_PASSWORD?: string;
 	/** Derived from APP_ENCRYPTION_KEY when unset. Set it when something outside
 	 *  the Worker has to hold it, such as an external tick pinger. */
 	SCHEDULER_SECRET?: string;
@@ -89,10 +89,6 @@ interface Env {
 	 *  verified against the live API yet, so it is off by default: the editor
 	 *  hides the affordance and the API refuses video files without it. */
 	ENABLE_VIDEO_UPLOAD?: string;
-	/** Set to "1" to let a Cloudflare cron trigger run the tick (see README →
-	 *  Scheduling). scripts/wrap-worker.mjs no-ops the scheduled handler without
-	 *  it, so an old cron cannot fire twice while you migrate. */
-	ENABLE_CF_CRON?: string;
 }
 
 interface Queue<Body = unknown> {

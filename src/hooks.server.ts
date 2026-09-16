@@ -14,7 +14,7 @@ import {
 	SESSION_COOKIE,
 	asMachineUser,
 	cookieSecureFlag,
-	ensureAdminUser,
+	getAdminUser,
 	getSessionUser,
 	isFullyVerified,
 	needsTotpEnroll
@@ -32,6 +32,8 @@ import { readStoredAppUrl, rememberAppUrl } from '$lib/server/app-settings';
 
 export function isPublicPath(path: string): boolean {
 	if (path === '/login' || path === '/login/setup-2fa' || path === '/login/verify') return true;
+	// First-run claim: reachable exactly while the instance has no account.
+	if (path === '/setup' || path === '/api/setup') return true;
 	if (
 		path === '/api/health' ||
 		path.startsWith('/api/media/public/') ||
@@ -142,10 +144,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// (the API-key path below falls back to a lookup by id). A fully anonymous
 	// request needs neither, and skipping it here keeps unauthenticated traffic
 	// — health probes, bots probing /login — from doing D1 work on every hit.
-	// Login bootstraps the row itself when a fresh database has none.
+	// Env-configured credentials bootstrap the row; a claimed instance already
+	// has it, and before the claim there is nothing to act as.
 	const hasCredential =
 		bearer !== null || (event.request.headers.get('x-api-key')?.trim() ?? '') !== '';
-	const admin = hasCredential ? await ensureAdminUser(db, appEnv, platformEnv.DB) : null;
+	const admin = hasCredential ? await getAdminUser(db, appEnv, platformEnv.DB) : null;
 
 	const session = await getSessionUser(db, appEnv, raw);
 	event.locals.user = session?.user ?? null;
@@ -161,8 +164,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	if (secretMatches(bearer, appEnv.API_TOKEN)) {
-		const row =
-			admin ?? (await first(db.select().from(users).where(eq(users.email, appEnv.ADMIN_EMAIL))));
+		// Before the claim there may be no row at all; a machine token then has
+		// nothing to act as.
+		const row = admin ?? (await getAdminUser(db, appEnv));
 		if (row) {
 			event.locals.user = asMachineUser(row);
 			event.locals.authMethod = 'bearer';

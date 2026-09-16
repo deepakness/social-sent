@@ -1,7 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AppDb } from '$lib/server/db/client';
 import { createTestDb } from '$lib/server/db/test';
-import { readStoredAppUrl, rememberAppUrl, APP_URL_SETTING } from '$lib/server/app-settings';
+import {
+	readStoredAppUrl,
+	rememberAppUrl,
+	readStoredAppName,
+	rememberAppName,
+	APP_URL_SETTING
+} from '$lib/server/app-settings';
 import { appSettings } from '$lib/server/db/schema';
 
 /**
@@ -43,5 +49,35 @@ describe('remembered app URL', () => {
 	it('ignores an empty origin', async () => {
 		await rememberAppUrl(db, '');
 		expect(await readStoredAppUrl(db)).toBe('https://sent.example.com');
+	});
+});
+
+describe('remembered instance name', () => {
+	let db: AppDb;
+	let close: () => void;
+	let count: () => number;
+	let reset: () => void;
+
+	beforeAll(async () => {
+		({ db, close, count, reset } = await createTestDb());
+	});
+	afterAll(() => close());
+
+	it('is empty until the settings form sets it', async () => {
+		expect(await readStoredAppName(db)).toBeNull();
+	});
+
+	it('stores a name and serves later reads from the cache', async () => {
+		await rememberAppName(db, 'My Scheduler');
+		reset();
+		expect(await readStoredAppName(db)).toBe('My Scheduler');
+		expect(count()).toBe(0);
+	});
+
+	it('trims, and treats a blank name as "use the default"', async () => {
+		await rememberAppName(db, '  Spaced  ');
+		expect(await readStoredAppName(db)).toBe('Spaced');
+		await rememberAppName(db, '');
+		expect(await readStoredAppName(db)).toBeNull();
 	});
 });
