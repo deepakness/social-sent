@@ -20,6 +20,9 @@ const envSchema = z.object({
 	// Local-dev convenience: skip the 2FA enrollment/verify dance. Honored only
 	// when APP_URL is localhost (see readAppEnv) so it can never leak to prod.
 	SKIP_TOTP: z.string().optional(),
+	// In-progress feature: the LinkedIn video upload path is wired but not yet
+	// verified against the live API, so it stays off unless an instance opts in.
+	ENABLE_VIDEO_UPLOAD: z.string().optional(),
 	LINKEDIN_CLIENT_ID: z.string().min(1).optional(),
 	LINKEDIN_CLIENT_SECRET: z.string().min(1).optional(),
 	THREADS_APP_ID: z.string().min(1).optional(),
@@ -42,6 +45,8 @@ const envSchema = z.object({
 
 export type AppEnv = z.infer<typeof envSchema> & {
 	skipTotp: boolean;
+	/** In-progress LinkedIn video uploads; off unless explicitly enabled. */
+	videoUploadEnabled: boolean;
 };
 
 /** Example values that must never reach a real deployment. Exported so
@@ -83,7 +88,13 @@ export function readAppEnv(source: Record<string, string | undefined>): AppEnv {
 		Boolean(source.SKIP_TOTP) &&
 		!['0', 'false', 'no', 'off'].includes((source.SKIP_TOTP ?? '').toLowerCase()) &&
 		localInstance;
-	return { ...parsed.data, skipTotp };
+	// Same truthiness rule as SKIP_TOTP: any value except an explicit "off".
+	// Deliberately not gated on a local instance — an operator may want to test
+	// the path on a real deployment.
+	const videoUploadEnabled =
+		Boolean(source.ENABLE_VIDEO_UPLOAD) &&
+		!['0', 'false', 'no', 'off'].includes((source.ENABLE_VIDEO_UPLOAD ?? '').toLowerCase());
+	return { ...parsed.data, skipTotp, videoUploadEnabled };
 }
 
 function procEnv(): Record<string, string | undefined> {
@@ -119,7 +130,8 @@ export function envFromPlatform(platformEnv: Record<string, unknown> | undefined
 		NOTIFY_FROM: asString(platformEnv?.NOTIFY_FROM) ?? fallback.NOTIFY_FROM,
 		MEDIA_PUBLIC_BASE_URL:
 			asString(platformEnv?.MEDIA_PUBLIC_BASE_URL) ?? fallback.MEDIA_PUBLIC_BASE_URL,
-		SKIP_TOTP: asString(platformEnv?.SKIP_TOTP) ?? fallback.SKIP_TOTP
+		SKIP_TOTP: asString(platformEnv?.SKIP_TOTP) ?? fallback.SKIP_TOTP,
+		ENABLE_VIDEO_UPLOAD: asString(platformEnv?.ENABLE_VIDEO_UPLOAD) ?? fallback.ENABLE_VIDEO_UPLOAD
 	};
 	return readAppEnv(src);
 }

@@ -48,6 +48,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 	return {
 		connections: rows.map(serializeConnection),
 		settings: parseProfileSettings(userRows[0]?.settingsJson ?? null),
-		displayName: userRows[0]?.displayName ?? null
+		displayName: userRows[0]?.displayName ?? null,
+		// In-progress feature flag; the editor only mirrors it for the picker.
+		videoEnabled: locals.env.videoUploadEnabled
 	};
 };

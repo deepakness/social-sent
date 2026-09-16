@@ -73,6 +73,10 @@ interface Env {
 	X_CLIENT_SECRET?: string;
 	/** Local-dev only: skips 2FA. Honored for localhost APP_URLs in dev builds. */
 	SKIP_TOTP?: string;
+	/** Set to "1" to enable video uploads (LinkedIn). The path is wired but not
+	 *  verified against the live API yet, so it is off by default: the editor
+	 *  hides the affordance and the API refuses video files without it. */
+	ENABLE_VIDEO_UPLOAD?: string;
 	/** Set to "1" to let a Cloudflare cron trigger run the tick (see README →
 	 *  Scheduling). scripts/wrap-worker.mjs no-ops the scheduled handler without
 	 *  it, so an old cron cannot fire twice while you migrate. */

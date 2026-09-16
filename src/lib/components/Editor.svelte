@@ -120,12 +120,22 @@
 	let {
 		initialConnections = [],
 		initialSettings = null,
-		displayName = null
+		displayName = null,
+		videoEnabled = false
 	}: {
 		initialConnections?: Connection[];
 		initialSettings?: ProfileSettings | null;
 		displayName?: string | null;
+		/** In-progress LinkedIn video uploads; the server decides, this is the affordance. */
+		videoEnabled?: boolean;
 	} = $props();
+
+	/** What the file picker accepts, and what a drop is filtered down to. */
+	const ACCEPTED_MEDIA = $derived(
+		videoEnabled
+			? 'image/png,image/jpeg,image/webp,image/gif,video/mp4'
+			: 'image/png,image/jpeg,image/webp,image/gif'
+	);
 
 	const SKIP_ASK_KEY = 'socialsent-skip-publish-confirm';
 
@@ -1333,9 +1343,16 @@
 	}
 
 	async function attachFilesToSegment(segmentIndex: number, files: File[]) {
-		const images = files.filter((f) => f.type.startsWith('image/') || f.type === 'video/mp4');
+		const images = files.filter(
+			(f) => f.type.startsWith('image/') || (videoEnabled && f.type === 'video/mp4')
+		);
 		if (!images.length) {
-			showToast('Only image files (PNG, JPEG, WebP, GIF) and MP4 video are supported', 'warn');
+			showToast(
+				videoEnabled
+					? 'Only image files (PNG, JPEG, WebP, GIF) and MP4 video are supported'
+					: 'Only image files (PNG, JPEG, WebP, GIF) are supported',
+				'warn'
+			);
 			return;
 		}
 		const blueskySelected = connections.some((c) => selected.has(c.id) && c.platform === 'bluesky');
@@ -2427,7 +2444,7 @@
 								<input
 									bind:this={fileRefs[index]}
 									type="file"
-									accept="image/png,image/jpeg,image/webp,image/gif,video/mp4"
+									accept={ACCEPTED_MEDIA}
 									multiple
 									class="hidden"
 									data-testid="file-input-{index}"

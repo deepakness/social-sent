@@ -17,7 +17,10 @@ export const TEST_ENV: AppEnv = {
 	AUTH_SECRET: 'test-auth-secret-at-least-8',
 	ADMIN_EMAIL: 'admin@localhost',
 	ADMIN_PASSWORD: 'admin123',
-	skipTotp: false
+	skipTotp: false,
+	// The in-progress LinkedIn video path stays off in tests unless a test
+	// opts in with { ...TEST_ENV, videoUploadEnabled: true }.
+	videoUploadEnabled: false
 };
 
 export interface TestDb {

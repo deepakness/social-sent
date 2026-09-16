@@ -883,3 +883,27 @@ test('a retryable publish failure is reported as retrying, not failed', async ()
 		await deleteConnection(connId);
 	}
 });
+
+test('video is not offered or accepted while ENABLE_VIDEO_UPLOAD is off', async () => {
+	// The media affordance needs a destination, like every other composer test.
+	await seedFirewalledBluesky(page, 'video-probe.bsky.social');
+	await page.goto('/compose');
+	const input = page.getByTestId('file-input-0');
+	await expect(input).toBeAttached();
+
+	// The picker does not advertise video…
+	const accept = (await input.getAttribute('accept')) ?? '';
+	expect(accept).toContain('image/png');
+	expect(accept).not.toContain('video');
+
+	// …and a programmatic drop of an MP4 is filtered out with a plain message
+	// rather than reaching the API, which refuses video while the flag is off.
+	await input.setInputFiles({
+		name: 'clip.mp4',
+		mimeType: 'video/mp4',
+		buffer: Buffer.from([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d])
+	});
+	await expect(
+		page.getByText('Only image files (PNG, JPEG, WebP, GIF) are supported')
+	).toBeVisible();
+});

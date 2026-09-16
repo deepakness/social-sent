@@ -185,6 +185,9 @@ export async function buildNormalizedPost(
 	};
 }
 
+const isVideoMedia = (m: { mime?: string | null }): boolean =>
+	(m.mime ?? '').toLowerCase().startsWith('video/');
+
 async function hydrateMedia(content: NormalizedPost, store: MediaStore): Promise<NormalizedPost> {
 	const fill = async (post: NormalizedPost): Promise<NormalizedPost> => {
 		const media = post.media
@@ -422,6 +425,11 @@ export async function publishTarget(
 			await buildNormalizedPost(db, target.draftId, conn.platform),
 			store
 		);
+		// A row uploaded before the feature was switched off (or on another
+		// instance) must fail with something a person can act on.
+		if (!env.videoUploadEnabled && (content.media ?? []).some(isVideoMedia)) {
+			throw new Error('Video uploads are not enabled on this instance');
+		}
 
 		const issues = provider.validate(content, {
 			maxCharacters: meta.maxCharacters,
@@ -745,6 +753,9 @@ export function isRetryableError(message: string): boolean {
 	if (lower.includes('max 1mb') || lower.includes('max 5mb') || lower.includes('15mb'))
 		return false;
 	if (lower.includes('x max 280') || lower.includes('max 1 cashtag')) return false;
+	// Video while ENABLE_VIDEO_UPLOAD is off: only the operator can change this,
+	// so retrying on a backoff wastes the attempt budget and buries the reason.
+	if (lower.includes('video uploads are not enabled')) return false;
 	if (lower.includes('x video is not supported')) return false;
 	if (lower.includes('utf-8 bytes') || lower.includes('max 16mb')) return false;
 	// The app's own host allowlist rejected the stored instance (Mastodon:

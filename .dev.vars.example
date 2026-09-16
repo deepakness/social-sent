@@ -30,6 +30,12 @@ ADMIN_PASSWORD=change-me
 # Optional. Local dev only: skip the 2FA enrollment/verify flow. Honored only
 # when APP_URL is localhost — never in production. Set to 1 to enable.
 # SKIP_TOTP=1
+# Optional. Enables video uploads (LinkedIn only: one MP4 per post, no images
+# mixed in). The upload path is wired but has not been verified end to end
+# against LinkedIn's live API, so it is off unless you set this. The file
+# picker hides video while it is off, and the API refuses video files.
+# ENABLE_VIDEO_UPLOAD=1
+
 # Optional. Failure digest via Resend: the API key plus the address that
 # should receive it. Unset means failures only show in the app.
 # RESEND_API_KEY=

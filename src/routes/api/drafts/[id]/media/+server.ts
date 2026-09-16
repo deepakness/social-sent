@@ -123,6 +123,11 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		const isVideoRow = (m: { mime: string | null }) =>
 			(m.mime || '').toLowerCase().startsWith('video/');
 		const newVideos = files.filter(isVideoFile).length;
+		// In-progress feature (ENABLE_VIDEO_UPLOAD): without this the route would
+		// happily park up to 95MB in R2 for a draft that cannot publish it.
+		if (newVideos > 0 && !locals.env.videoUploadEnabled) {
+			return fail('Video uploads are not enabled on this instance', 400);
+		}
 		const newImages = files.length - newVideos;
 		const onSegment = existing.filter((m) => (m.segmentIndex ?? 0) === segmentIndex);
 		const existingVideos = onSegment.filter(isVideoRow).length;

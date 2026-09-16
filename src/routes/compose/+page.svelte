@@ -8,4 +8,5 @@
 	initialConnections={data.connections}
 	initialSettings={data.settings}
 	displayName={data.displayName}
+	videoEnabled={data.videoEnabled}
 />
