@@ -86,15 +86,23 @@ export const handle: Handle = async ({ event, resolve }) => {
 		const detail = `APP_URL is ${appEnv.APP_URL}, but this request arrived on ${event.url.hostname}. Set APP_URL to this deployment's URL and redeploy.`;
 		console.error(`[env] ${detail}`);
 		if (path.startsWith('/api/')) {
-			return new Response(JSON.stringify({ error: detail }), {
-				status: 503,
-				headers: { 'content-type': 'application/json' }
-			});
+			return withPageSecurity(
+				path,
+				new Response(JSON.stringify({ error: detail }), {
+					status: 503,
+					headers: { 'content-type': 'application/json' }
+				}),
+				secureRequest
+			);
 		}
-		return new Response(detail, {
-			status: 503,
-			headers: { 'content-type': 'text/plain; charset=utf-8' }
-		});
+		return withPageSecurity(
+			path,
+			new Response(detail, {
+				status: 503,
+				headers: { 'content-type': 'text/plain; charset=utf-8' }
+			}),
+			secureRequest
+		);
 	}
 	const db = createD1Db(platformEnv.DB);
 	event.locals.db = db;

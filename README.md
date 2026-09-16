@@ -67,7 +67,9 @@ What it cannot do — three things you finish by hand:
 npm run setup
 ```
 
-It signs in through `wrangler login` (no API token to mint), creates the D1 database and R2 bucket if they are missing, generates the secrets, writes them to `.dev.vars` and the Worker, applies the migrations, deploys, and sets `APP_URL` to the URL it just deployed to. It is safe to re-run: existing resources are reused, and an existing `APP_ENCRYPTION_KEY` is never rotated because rotating it would orphan every stored credential. `npm run setup -- --dry-run` prints the plan without touching anything.
+It signs in through `wrangler login` (no API token to mint), creates the D1 database and R2 bucket if they are missing, generates the secrets, writes them to `.dev.vars` and to the Worker, applies the migrations, deploys, and sets `APP_URL` to the URL it just deployed to — when the deploy prints one; otherwise it prints the command to set it yourself.
+
+**It is safe to re-run, and it will not damage a running deployment.** Resources that exist are reused, a `database_id` already in your config is never replaced, and any secret already set on the Worker is left alone — rotating `APP_ENCRYPTION_KEY` orphans every stored credential, and changing `ADMIN_EMAIL` deletes the old user row and everything cascading from it, so neither happens by accident. Pass `--rotate-secrets` or `--set-admin` when that is what you want. `npm run setup -- --dry-run` prints the plan and only performs read-only calls.
 
 ### Or step by step
 
@@ -145,7 +147,7 @@ The dashboard shows a "failed to publish" banner linking to the Failed tab. To a
 There is no in-app password form; update the Worker secret:
 
 ```sh
-npx wrangler secret put ADMIN_PASSWORD
+node scripts/wrangler.mjs secret put ADMIN_PASSWORD
 ```
 
 Changing `ADMIN_EMAIL` is a bigger deal: the app keeps exactly one user row and deletes any user whose email is not `ADMIN_EMAIL`, so the old row (and everything cascading from it — drafts, connections, sessions) is removed on the next request. Change it deliberately, and expect to reconnect your accounts.

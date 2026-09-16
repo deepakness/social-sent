@@ -44,7 +44,9 @@ export type AppEnv = z.infer<typeof envSchema> & {
 	skipTotp: boolean;
 };
 
-const PLACEHOLDER_SECRETS = new Set([
+/** Example values that must never reach a real deployment. Exported so
+ *  scripts/setup.mjs can be checked against it. */
+export const PLACEHOLDER_SECRETS = new Set([
 	'change-me',
 	// Current .dev.vars.example values.
 	'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
