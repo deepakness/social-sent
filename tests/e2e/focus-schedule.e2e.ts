@@ -45,16 +45,18 @@ test('schedule panel prefills current date/time with D/H/M offsets', async ({ pa
 	await expect(page.getByTestId('schedule-offset-value')).toHaveValue('1');
 	await expect(page.getByTestId('schedule-offset-unit')).toHaveValue('hours');
 
-	// Date/time prefilled (current date, usable time).
-	const today = await page.evaluate(() => {
-		const d = new Date();
+	// Date/time prefilled with "now + 1 hour" (DEFAULT_SCHEDULE_OFFSET), which
+	// rolls into the next day any time after 23:00 — computing the date from the
+	// raw clock made this test fail for a run in that hour.
+	const expectedDate = await page.evaluate(() => {
+		const d = new Date(Date.now() + 60 * 60_000);
 		const pad = (n: number) => String(n).padStart(2, '0');
 		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 	});
 	// Note: date/time inputs are not rendered when in 'relative' mode.
 	// We need to switch to absolute mode to verify their prefilled values.
 	await page.getByText('Specific Date').click();
-	await expect(page.getByTestId('schedule-date')).toHaveValue(today);
+	await expect(page.getByTestId('schedule-date')).toHaveValue(expectedDate);
 	const timeVal = await page.getByTestId('schedule-time').inputValue();
 	expect(timeVal).toMatch(/^\d{2}:\d{2}$/);
 
