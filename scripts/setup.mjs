@@ -17,14 +17,14 @@
 //   npm run setup -- --dry-run          # read-only: checks auth, prints the plan
 //   npm run setup -- --yes              # no prompts: generates secrets, prints them once
 //   npm run setup -- --skip-deploy      # everything except the deploy
-//   npm run setup -- --rotate-secrets   # also overwrite APP_ENCRYPTION_KEY/AUTH_SECRET/SCHEDULER_SECRET
+//   npm run setup -- --rotate-secrets   # also overwrite APP_ENCRYPTION_KEY (rotates the derived secrets too)
 //   npm run setup -- --set-admin        # also overwrite ADMIN_EMAIL/ADMIN_PASSWORD
 //   npm run setup -- --name my-sent --bucket my-sent-media --db my-sent
 //   npm run setup -- --admin-email you@example.com --admin-password '…'
 //
 // The "Deploy to Cloudflare" button in the README covers the same ground in a
-// browser. This script exists for people who prefer a terminal and want APP_URL
-// set to the real URL on the first deploy instead of after it.
+// browser. This script exists for people who prefer a terminal: it can pin
+// APP_URL to the URL it just deployed to, which the browser flow cannot know.
 //
 // Everything it writes to your Cloudflare account: one D1 database, one R2
 // bucket, the Worker, its secrets and its migrations. Everything it writes
@@ -76,8 +76,6 @@ const PLACEHOLDERS = new Set([
 /** Minimum lengths the app's own env schema enforces. */
 const MIN_LENGTH = {
 	APP_ENCRYPTION_KEY: 32,
-	AUTH_SECRET: 16,
-	SCHEDULER_SECRET: 32,
 	ADMIN_PASSWORD: 8,
 	ADMIN_EMAIL: 3
 };
@@ -377,14 +375,13 @@ async function main() {
 
 	for (const [key, fallback] of Object.entries({
 		APP_ENCRYPTION_KEY: () => reusable('APP_ENCRYPTION_KEY') ?? generateHex(),
-		AUTH_SECRET: () => reusable('AUTH_SECRET') ?? generateHex(),
-		SCHEDULER_SECRET: () => reusable('SCHEDULER_SECRET') ?? generateHex(),
 		ADMIN_EMAIL: () => adminEmail,
 		ADMIN_PASSWORD: () => adminPassword
 	})) {
 		const wantsOverwrite = key.startsWith('ADMIN_') ? SET_ADMIN : ROTATE_SECRETS;
 		if (existingSecrets.has(key) && !wantsOverwrite) {
-			// Overwriting APP_ENCRYPTION_KEY orphans stored credentials, and
+			// Overwriting APP_ENCRYPTION_KEY orphans stored credentials and
+			// rotates the secrets derived from it (sessions sign out), and
 			// changing ADMIN_EMAIL deletes the existing user row (drafts,
 			// connections, keys) on the next request. Neither is a setup step.
 			warn(`${key} is already set on the Worker — left alone`);
@@ -440,7 +437,7 @@ async function main() {
 Next:
   1. Deploy the Worker: npm run deploy
   2. Re-run this script (npm run setup): it skips what already exists, uploads the
-     secrets and sets APP_URL to the deployed URL.`);
+     secrets and pins APP_URL to the deployed URL.`);
 		return;
 	}
 
@@ -460,26 +457,18 @@ Next:
 		siteUrl = answer && /^https:\/\//.test(answer) ? answer.replace(/\/$/, '') : '';
 	}
 	if (siteUrl) {
-		// APP_URL is the one secret this script has to be able to fix: the button
-		// flow cannot know the URL, and the app answers 503 until it is right.
-		let needsAppUrl = !existingSecrets.has('APP_URL');
-		if (!needsAppUrl && !DRY) {
-			const probe = await fetch(siteUrl, { redirect: 'manual' }).catch(() => null);
-			if (probe?.status === 503) {
-				const body = await probe.text().catch(() => '');
-				needsAppUrl = body.includes('APP_URL is');
-				if (needsAppUrl) info('the deployment reports the wrong APP_URL — updating it');
-			}
-		}
-		if (needsAppUrl) {
+		// Pin APP_URL to the URL this run deployed to. Optional — an unset
+		// APP_URL follows the host each request arrives on — but pinning makes
+		// absolute links and OAuth redirect URIs deterministic from the first
+		// scheduled tick, before anyone has opened the app.
+		if (!existingSecrets.has('APP_URL')) {
 			wrangler(['secret', 'put', 'APP_URL'], { input: `${siteUrl}\n` });
-			did(`APP_URL set to ${siteUrl}`);
-		} else if (existingSecrets.has('APP_URL')) {
+			did(`APP_URL pinned to ${siteUrl}`);
+		} else {
 			warn(`APP_URL is already set on the Worker — left alone (expected ${siteUrl})`);
 		}
 	} else {
-		warn('APP_URL not set — the app answers 503 on a real host until you set it:');
-		warn('  node scripts/wrangler.mjs secret put APP_URL');
+		info('APP_URL left unset — the app follows the host each request arrives on.');
 	}
 
 	// 9. Deploy again so the secrets are live, then report.
@@ -494,8 +483,11 @@ Next:
      ${generatedPassword ? `password: ${adminPassword}  (also in ${DEV_VARS})` : ''}
   2. Enrol an authenticator app when asked, and save the backup codes.
   3. Connect accounts (Accounts → Connect new).
-  4. For scheduled posts, point a cron at POST ${siteUrl || 'APP_URL'}/api/internal/tick with
-     Authorization: Bearer ${reusable('SCHEDULER_SECRET') ?? uploads.SCHEDULER_SECRET ?? '(your SCHEDULER_SECRET)'} — see README → Scheduling.
+  4. Scheduled posts publish themselves: the Worker's cron trigger runs every
+     minute; AUTH_SECRET and SCHEDULER_SECRET are derived from APP_ENCRYPTION_KEY.
+     To drive the tick from somewhere else, set SCHEDULER_SECRET
+     (\`openssl rand -hex 32\`) and POST ${siteUrl || 'APP_URL'}/api/internal/tick with
+     it as the bearer — see README → Scheduling.
   5. Local dev uses the same secrets in ${DEV_VARS}; run \`npm run dev\`.`);
 	}
 }

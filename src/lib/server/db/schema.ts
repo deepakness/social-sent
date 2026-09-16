@@ -258,3 +258,11 @@ export const notificationState = sqliteTable('notification_state', {
 	id: text('id').primaryKey(),
 	lastFailureDigestAt: integer('last_failure_digest_at', { mode: 'timestamp_ms' })
 });
+
+/** Instance-level values discovered at runtime rather than configured — see
+ *  drizzle/0017_app_settings.sql. Today: the public URL. */
+export const appSettings = sqliteTable('app_settings', {
+	key: text('key').primaryKey(),
+	value: text('value').notNull(),
+	updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull()
+});

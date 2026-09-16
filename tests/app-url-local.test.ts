@@ -2,15 +2,15 @@ import { describe, expect, it } from 'vitest';
 import {
 	isLocalAppUrl,
 	isLocalRequestHost,
-	isMisconfiguredLocalInstance
+	isPinnedAppUrl,
+	resolveAppUrl
 } from '$lib/domain/app-url';
 
 /**
  * The "local instance" signal decides whether example secrets are tolerated and
- * whether SKIP_TOTP can be honored. `.dev.vars.example` ships a localhost
- * APP_URL and the Deploy-to-Cloudflare flow offers it as a pre-filled prompt,
- * so the signal must require a local *request* too — otherwise a public
- * deployment runs with the published example keys.
+ * whether SKIP_TOTP can be honored. It is derived from the resolved APP_URL:
+ * a deployment cannot know its URL before it exists, so the request's own
+ * origin is adopted unless one is pinned — and a public origin is never local.
  */
 describe('local instance detection', () => {
 	it('recognises local APP_URLs', () => {
@@ -35,13 +35,100 @@ describe('local instance detection', () => {
 		}
 	});
 
-	it('flags only a local APP_URL served from a non-local host', () => {
-		expect(isMisconfiguredLocalInstance('http://localhost:5173', 'localhost:4173')).toBe(false);
-		expect(isMisconfiguredLocalInstance('http://localhost:5173', '192.168.1.20')).toBe(false);
-		expect(isMisconfiguredLocalInstance('https://social.example', 'social.example')).toBe(false);
-		expect(isMisconfiguredLocalInstance('http://localhost:5173', 'sent.acct.workers.dev')).toBe(
-			true
-		);
-		expect(isMisconfiguredLocalInstance('http://127.0.0.1:8787', 'social.example')).toBe(true);
+	it('treats only a non-local configured value as pinned', () => {
+		expect(isPinnedAppUrl('https://sent.acct.workers.dev')).toBe(true);
+		for (const value of ['http://localhost:5173', '', undefined, null, 'not a url']) {
+			expect(isPinnedAppUrl(value)).toBe(false);
+		}
+	});
+});
+
+describe('resolveAppUrl', () => {
+	const request = { requestUrl: 'https://sent.acct.workers.dev/login' };
+
+	it('keeps a pinned APP_URL, whatever the request came in on', () => {
+		expect(resolveAppUrl({ ...request, configured: 'https://sent.example.com/' })).toEqual({
+			url: 'https://sent.example.com',
+			source: 'configured'
+		});
+		expect(
+			resolveAppUrl({
+				requestUrl: 'http://192.168.1.20:5173/',
+				configured: 'https://sent.example.com'
+			})
+		).toEqual({ url: 'https://sent.example.com', source: 'configured' });
+	});
+
+	it('adopts the request origin when APP_URL is unset', () => {
+		expect(resolveAppUrl(request)).toEqual({
+			url: 'https://sent.acct.workers.dev',
+			source: 'request'
+		});
+	});
+
+	it('adopts the request origin over the localhost value .dev.vars.example ships', () => {
+		expect(resolveAppUrl({ ...request, configured: 'http://localhost:5173/' })).toEqual({
+			url: 'https://sent.acct.workers.dev',
+			source: 'request'
+		});
+	});
+
+	it('keeps a localhost APP_URL for local requests, including LAN ones', () => {
+		for (const requestUrl of ['http://localhost:5173/', 'http://192.168.1.20:5173/posts']) {
+			expect(resolveAppUrl({ requestUrl, configured: 'http://localhost:5173' })).toEqual({
+				url: 'http://localhost:5173',
+				source: 'configured'
+			});
+		}
+	});
+
+	it('never adopts the wrapper\u2019s internal host', () => {
+		expect(
+			resolveAppUrl({
+				requestUrl: 'https://socialsent.internal/api/internal/tick',
+				stored: 'https://sent.acct.workers.dev'
+			})
+		).toEqual({ url: 'https://sent.acct.workers.dev', source: 'stored' });
+	});
+	it('reports nothing rather than the internal host when nothing is known', () => {
+		// A cron tick on a deployment nobody has opened yet: an internal URL in
+		// an email or a media link would be worse than no link at all.
+		expect(resolveAppUrl({ requestUrl: 'https://socialsent.internal/api/internal/tick' })).toEqual({
+			url: '',
+			source: 'none'
+		});
+	});
+
+	it('adopts a loopback request when nothing is configured', () => {
+		expect(resolveAppUrl({ requestUrl: 'http://localhost:5173/posts' })).toEqual({
+			url: 'http://localhost:5173',
+			source: 'request'
+		});
+	});
+
+	it('does not adopt a private LAN address', () => {
+		// A dev server reached from a phone is not a public origin, and treating
+		// it as one would let a spoofed Host header look local.
+		expect(resolveAppUrl({ requestUrl: 'http://192.168.1.20:5173/posts' })).toEqual({
+			url: '',
+			source: 'none'
+		});
+		expect(
+			resolveAppUrl({
+				requestUrl: 'http://192.168.1.20:5173/posts',
+				stored: 'http://localhost:5173'
+			})
+		).toEqual({ url: 'http://localhost:5173', source: 'stored' });
+	});
+
+	it('falls back to the remembered origin when there is no request', () => {
+		expect(resolveAppUrl({ stored: 'https://sent.acct.workers.dev/' })).toEqual({
+			url: 'https://sent.acct.workers.dev',
+			source: 'stored'
+		});
+	});
+
+	it('reports no origin when nothing is known, rather than inventing one', () => {
+		expect(resolveAppUrl({})).toEqual({ url: '', source: 'none' });
 	});
 });

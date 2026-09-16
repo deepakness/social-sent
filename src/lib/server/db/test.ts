@@ -12,6 +12,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 export const TEST_ENV: AppEnv = {
 	APP_URL: 'http://localhost:5173',
+	appUrlSource: 'configured',
 	APP_NAME: 'SocialSent',
 	APP_ENCRYPTION_KEY: 'feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface',
 	AUTH_SECRET: 'test-auth-secret-at-least-8',

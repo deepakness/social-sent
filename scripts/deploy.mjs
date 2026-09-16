@@ -99,4 +99,5 @@ run('node', ['scripts/wrangler.mjs', 'deploy']);
 
 console.log('\nDeploy finished.');
 console.log('Set a script token if you have not already: npm run secrets:put -- API_TOKEN');
-console.log('Then store APP_URL and API_TOKEN as GitHub Actions secrets so scheduled posts tick.');
+console.log('Scheduled posts tick from the Worker cron trigger (wrangler.jsonc → triggers).');
+console.log('If you would rather ping /api/internal/tick yourself, set SCHEDULER_SECRET.');

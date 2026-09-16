@@ -13,12 +13,13 @@
 	// in `wrangler.personal.jsonc` (gitignored) and every npm script will pick
 	// it up automatically — see scripts/wrangler.mjs.
 	//
-	// No crons here: the Workers free plan cannot hold a per-minute schedule.
-	// Point an external pinger or the GitHub Actions workflow at
-	// /api/internal/tick instead. To use a Cloudflare cron trigger instead
-	// (paid plan), add one under "triggers" and set ENABLE_CF_CRON=1 in the
-	// "vars" below — scripts/wrap-worker.mjs no-ops the scheduled handler
-	// without it, so a leftover trigger cannot run the tick twice.
+	// A per-minute cron ships enabled. The Workers free plan allows five cron
+	// triggers per account and documents `* * * * *`; each scheduled run gets
+	// the plan's CPU budget — the same one an HTTP tick gets — so a tick that
+	// runs out of budget leaves the rest due and the next one picks them up.
+	// Delete the entry and point an external pinger at /api/internal/tick
+	// instead if you would rather not use a trigger (README → Scheduling).
+	"triggers": { "crons": ["* * * * *"] },
 	//
 	// Optional: binding a queue makes the tick hand publishes to a consumer
 	// instead of publishing inline (one publish per message, with retries).
@@ -53,6 +54,9 @@
 	// Worker secrets (`npm run secrets:put`), because a deploy overwrites vars
 	// with whatever this file says.
 	"vars": {
-		"APP_NAME": "SocialSent"
+		"APP_NAME": "SocialSent",
+		// Run the scheduled handler. scripts/wrap-worker.mjs no-ops it without
+		// this, so a trigger left over from an older config cannot run the tick.
+		"ENABLE_CF_CRON": "1"
 	}
 }

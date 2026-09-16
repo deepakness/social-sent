@@ -19,13 +19,13 @@ Write a draft, optionally customize per platform, then publish now or schedule. 
 
 - Node 22.12+
 - A Cloudflare account with Workers, D1, and R2 available. Cloudflare asks for a payment method on file to enable R2, even for free-tier usage.
-- Something that can call `/api/internal/tick` on a schedule, if you want scheduled posts to fire. The Workers free plan cannot hold a per-minute cron trigger — see [Scheduling](#scheduling).
+- Nothing else for scheduled posts: `wrangler.jsonc` ships a per-minute cron trigger, and the Worker publishes due posts on its own. See [Scheduling](#scheduling) if you would rather ping `/api/internal/tick` from your own cron instead.
 
 ## Local
 
 ```sh
 cp .dev.vars.example .dev.vars
-# edit ADMIN_EMAIL, ADMIN_PASSWORD, APP_ENCRYPTION_KEY, AUTH_SECRET
+# edit ADMIN_EMAIL, ADMIN_PASSWORD, APP_ENCRYPTION_KEY
 # optional: API_TOKEN for script access (min 16 chars)
 
 npm install
@@ -35,7 +35,7 @@ npm run dev
 
 Open http://localhost:5173 and sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.dev.vars`. Those values are the live login — change `.dev.vars` and restart to change the password. The D1 user row is only an ID for drafts and connections.
 
-First sign-in asks you to enroll an authenticator (Google Authenticator or any TOTP app). Save the backup codes. For friction-free local dev, set `SKIP_TOTP=1` in `.dev.vars` — 2FA is skipped entirely, and the flag is honored only while `APP_URL` is localhost, so it can never disable 2FA in production. Remove it (and restart) to go back to real 2FA.
+First sign-in asks you to enroll an authenticator (Google Authenticator or any TOTP app). Save the backup codes. For friction-free local dev, set `SKIP_TOTP=1` in `.dev.vars` — 2FA is skipped entirely, and the flag is honored only while the instance resolves to a localhost URL, so it can never disable 2FA on a real host. Remove it (and restart) to go back to real 2FA.
 
 ```sh
 npm test          # vitest
@@ -53,11 +53,14 @@ Local `npm run dev` ticks due posts every 30s automatically.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/deepakness/social-sent)
 
-Cloudflare clones this repo into your own GitHub account, creates the Worker, **provisions the D1 database and the R2 bucket** (`wrangler.jsonc` deliberately leaves `database_id` empty for exactly that reason), asks for the secrets listed in `.dev.vars.example`, and wires up Workers Builds so later pushes deploy themselves.
+Cloudflare clones this repo into your own GitHub account, creates the Worker, **provisions the D1 database and the R2 bucket** (`wrangler.jsonc` deliberately leaves `database_id` empty for exactly that reason), asks for the three secrets in `.dev.vars.example`, and wires up Workers Builds so later pushes deploy themselves.
 
-What it cannot do — three things you finish by hand:
+Nothing needs to be configured for the URL: a deployment cannot know it before the Worker exists, so the app uses the origin each request arrives on (and remembers it for the cron tick, which has no request of its own). Set `APP_URL` only to pin a deliberate origin.
 
-- **`APP_URL` is not known until the Worker exists.** The setup page offers the example value; leave it, then set the real URL and redeploy. **Until you do, the app answers 503 on a real host** rather than running on the example secrets — that is deliberate, it is the guard that stops a public deployment booting with `deadbeef…` as its encryption key.
+The example secrets do have to go: the setup page asks for `APP_ENCRYPTION_KEY`, `ADMIN_EMAIL` and `ADMIN_PASSWORD`, and a deployment that kept the example ones answers 503 rather than running on a publicly-known key. That is the whole list — the other secrets are derived, and scheduled posts publish themselves through the cron trigger in `wrangler.jsonc`.
+
+What it cannot do — two things you finish by hand:
+
 - **OAuth apps** for LinkedIn, Threads and X have to be registered at each provider (see [OAuth app setup](#oauth-app-setup)), and their redirect URIs need the final URL.
 - **Updates are yours.** The button makes a copy, not a fork: `git remote add upstream https://github.com/deepakness/social-sent && git pull upstream main`.
 
@@ -67,7 +70,7 @@ What it cannot do — three things you finish by hand:
 npm run setup
 ```
 
-It signs in through `wrangler login` (no API token to mint), creates the D1 database and R2 bucket if they are missing, generates the secrets, writes them to `.dev.vars` and to the Worker, applies the migrations, deploys, and sets `APP_URL` to the URL it just deployed to — when the deploy prints one; otherwise it prints the command to set it yourself.
+It signs in through `wrangler login` (no API token to mint), creates the D1 database and R2 bucket if they are missing, generates `APP_ENCRYPTION_KEY` and the admin login, writes them to `.dev.vars` and to the Worker, applies the migrations, deploys, and pins `APP_URL` to the URL it just deployed to — when the deploy prints one; otherwise it prints the command to set it yourself. (You can also skip that: an unset `APP_URL` follows the host each request arrives on.)
 
 **It is safe to re-run, and it will not damage a running deployment.** Resources that exist are reused, a `database_id` already in your config is never replaced, and any secret already set on the Worker is left alone — rotating `APP_ENCRYPTION_KEY` orphans every stored credential, and changing `ADMIN_EMAIL` deletes the old user row and everything cascading from it, so neither happens by accident. Pass `--rotate-secrets` or `--set-admin` when that is what you want. `npm run setup -- --dry-run` prints the plan and only performs read-only calls.
 
@@ -90,14 +93,12 @@ These must be Worker secrets, not `[vars]`: a deploy overwrites `vars` with what
 
 ```sh
 node scripts/wrangler.mjs secret put APP_ENCRYPTION_KEY   # openssl rand -hex 32
-node scripts/wrangler.mjs secret put AUTH_SECRET          # openssl rand -hex 32
 node scripts/wrangler.mjs secret put ADMIN_EMAIL
 node scripts/wrangler.mjs secret put ADMIN_PASSWORD
-node scripts/wrangler.mjs secret put APP_URL              # https://socialsent.<account>.workers.dev
 node scripts/wrangler.mjs secret put API_TOKEN            # openssl rand -hex 32
 ```
 
-Also set `SCHEDULER_SECRET` (`openssl rand -hex 32`) if you want the tick endpoint to work — see [Scheduling](#scheduling). Optional extras:
+That is the whole list: `AUTH_SECRET` and `SCHEDULER_SECRET` are derived from `APP_ENCRYPTION_KEY`, and `APP_URL` is derived from the request — see [Secrets](#secrets). Optional extras:
 
 ```sh
 # Public media origin for Meta's crawler (an R2 custom domain behind Cloudflare's cache)
@@ -120,7 +121,9 @@ npm run deploy
 
 ### Scheduling
 
-Scheduled posts save to D1 and fire when something calls the tick endpoint. The Workers free plan cannot hold a per-minute cron trigger, so use either an external cron job (cron-job.org, a Raspberry Pi, a systemd timer) or the bundled GitHub Actions workflow, both hitting:
+Scheduled posts save to D1 and are published by a per-minute cron trigger, which `wrangler.jsonc` ships enabled (`"triggers"`, plus `ENABLE_CF_CRON=1` in `vars` — the wrapper no-ops the scheduled handler without it, so a leftover trigger cannot run the tick twice). The Workers free plan allows five cron triggers per account; each run gets the plan's CPU budget, the same one an HTTP tick gets, so a tick that runs out of budget leaves the rest due for the next minute.
+
+To drive the tick from something else instead — cron-job.org, a Raspberry Pi, a systemd timer, the bundled GitHub Actions workflow, a different cadence on a paid plan — POST to:
 
 ```sh
 curl -X POST "$APP_URL/api/internal/tick" \
@@ -130,13 +133,13 @@ curl -X POST "$APP_URL/api/internal/tick" \
 
 Both headers matter: the endpoint takes `SCHEDULER_SECRET` (`API_TOKEN` still works as a fallback; `AUTH_SECRET` never does — it signs sessions and is rejected on the wire), and `Content-Type: application/json` is required because SvelteKit's built-in CSRF guard rejects form-encoded POSTs without an `Origin` header (403) before app code ever runs. Clients that default to a form content type must override it.
 
-`SCHEDULER_SECRET` must be 32+ characters and lives in exactly two places — the Worker secret and the pinger config — so rotate both together. For the GitHub workflow, set repository secrets `APP_URL` and `SCHEDULER_SECRET`. That workflow is scheduled every five minutes (GitHub's shortest interval), but GitHub throttles it to roughly one run every two hours, so treat it as a backup. Queue treats a heartbeat older than 6 hours as delayed. You can also run it manually from **Actions → Scheduler tick → Run workflow**.
+An external caller needs a bearer it can read, and the derived one is not readable from outside, so set `SCHEDULER_SECRET` (`openssl rand -hex 32`) when you add a pinger. It then lives in two places — the Worker secret and the pinger's config — so rotate both together. Without it (and without `API_TOKEN`) an external caller cannot authenticate at all; the built-in cron keeps working either way, because the Worker derives the same value. The bundled GitHub workflow stays off until you set repository secrets `APP_URL` and `SCHEDULER_SECRET`; with the built-in cron running, treat it as a backup rather than the primary tick. It is scheduled every five minutes (GitHub's shortest interval) but GitHub throttles it to roughly one run every two hours. Queue treats a heartbeat older than 6 hours as delayed. You can also run it manually from **Actions → Scheduler tick → Run workflow**.
 
 A tick publishes as many due targets as it can inside D1's per-invocation statement budget (50 on the free plan, which is roughly three or four posts), then stops and leaves the rest due — the next tick picks them up. A backlog therefore drains a few posts per tick rather than all at once, and nothing is lost if a tick dies half-way.
 
-Never run two per-minute callers plus a Cloudflare cron together. Ticks are idempotent, so overlap is safe, but keep it to one pinger plus the throttled GitHub backup.
+Ticks are idempotent, so an extra caller is safe rather than harmful — but there is no reason to run a per-minute pinger alongside the cron. Keep one primary tick and, at most, the throttled GitHub backup.
 
-On a paid plan you can skip the external pinger: add a cron under `triggers` in `wrangler.jsonc` and set `ENABLE_CF_CRON` to `1` in its `vars`. The Worker ignores scheduled runs until that flag is set, so a leftover trigger cannot double-fire while you switch over.
+To change the cadence, edit `triggers.crons` in `wrangler.jsonc` (`*/5 * * * *` and friends are fine on the free plan too). To use no trigger at all, delete the `triggers` block and the `ENABLE_CF_CRON` var: the Worker ignores scheduled runs unless that var is `1`, so removing one before the other cannot double-fire the tick.
 
 ### Failure alerts (optional)
 
@@ -163,6 +166,13 @@ npm run deploy
 
 `APP_NAME`, `APP_URL` and the rest of your configuration live in `wrangler.personal.jsonc` and Worker secrets, so a pull never overwrites them. Deploying from the button instead? Push the same changes to your own copy (or pull from upstream first) and Workers Builds takes it from there.
 
+One exception: because a personal config replaces the committed one, a config change upstream does not reach your deployment. Updating from a checkout that predates the built-in scheduler? Add these two keys to `wrangler.personal.jsonc` or scheduled posts stay silent:
+
+```jsonc
+"triggers": { "crons": ["* * * * *"] },
+"vars": { "APP_NAME": "SocialSent", "ENABLE_CF_CRON": "1" }
+```
+
 ## Keeping your own deployment separate from upstream
 
 If you run your own instance while pulling updates from this repo, keep your instance-specific values in `wrangler.personal.jsonc` (gitignored) instead of editing `wrangler.jsonc`. Copy the committed file and change `name`, `database_id`, `database_name`, and `bucket_name`.
@@ -178,6 +188,16 @@ Because your changes live in files upstream never touches, `git pull upstream ma
 ## Naming your instance
 
 `APP_NAME` (a plain `[vars]` entry, default `SocialSent`) is shown in the page title, the header, and the login screen. Set it to whatever you like — the outbound `User-Agent`, the Mastodon app name, cookies, and API-key prefixes stay fixed so upgrades keep working.
+
+`APP_URL` (a Worker secret, not a var) is the instance's public origin. It is optional: left unset, the app uses the origin each request arrives on and remembers the first authenticated one, which is how a deployment works without knowing its URL in advance. Set it to pin a deliberate origin — a custom domain, or the hostname OAuth redirect URIs and signed media URLs must use. A pinned value does not follow a hostname change, so update it if you move.
+
+## Secrets
+
+`APP_ENCRYPTION_KEY` is the only secret a deployment has to bring. It encrypts the provider tokens and TOTP secret stored in D1, so it cannot be generated at runtime and stored there — and because rotating it means reconnecting every account, there is no "set a temporary one now, change it later" either. Generate it once with `openssl rand -hex 32`.
+
+`AUTH_SECRET` (signs sessions and OAuth state) and `SCHEDULER_SECRET` (the tick bearer) are derived from it with HMAC-SHA256, so there is nothing else to invent or keep in sync. Set either one explicitly to override the derivation, and delete it to go back. Changing `AUTH_SECRET` signs everybody out. You need `SCHEDULER_SECRET` only when something outside the Worker has to hold the tick bearer, such as an external pinger (see [Scheduling](#scheduling)).
+
+`ADMIN_EMAIL` and `ADMIN_PASSWORD` are the login. On a deployed Worker keep them as Worker secrets, never as vars: a deploy overwrites `vars` with whatever `wrangler.jsonc` says.
 
 ## Script / app API
 

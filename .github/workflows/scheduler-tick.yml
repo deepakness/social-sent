@@ -1,4 +1,8 @@
 name: Scheduler tick
+# Optional backup tick. Scheduled posts are published by the Worker's own cron
+# trigger, which ships enabled (see wrangler.jsonc). This workflow is for
+# deployments that would rather not use a trigger; it skips itself when the
+# APP_URL / SCHEDULER_SECRET repository secrets are not set.
 
 on:
   schedule:

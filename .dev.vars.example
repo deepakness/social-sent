@@ -1,15 +1,29 @@
 # Copy to .dev.vars for local `npm run dev`
-APP_URL=http://localhost:5173
+#
+# Optional. A deployment cannot know its own URL before it exists, so the app
+# uses the origin of the request it is serving; set this only to pin a custom
+# domain or a deliberate public origin. Local dev needs nothing here — the
+# derived origin is http://localhost:5173. Opening a dev server from another
+# device (a LAN address) does not count as local: generate real keys for that.
+# APP_URL=http://localhost:5173
 
 # Instance name shown in the UI (title, header, login screen).
 # Can also be set as a Worker var — see wrangler.jsonc.
 # APP_NAME=SocialSent
 
 # Generate your own:  openssl rand -hex 32
-# The two values below are deliberately obvious placeholders (64 hex chars, as a
-# real key must be). Never deploy them.
+# The only secret a deployment has to bring. AUTH_SECRET and SCHEDULER_SECRET
+# are derived from it (see below), and it encrypts the provider tokens stored in
+# D1 — so it cannot be generated at runtime, and rotating it means reconnecting
+# every account. The value below is a deliberate placeholder. Never deploy it.
 APP_ENCRYPTION_KEY=deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
-AUTH_SECRET=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+
+# Both derived from APP_ENCRYPTION_KEY when unset, so leave them empty unless
+# you want them independent. AUTH_SECRET signs sessions (changing it signs
+# everyone out); SCHEDULER_SECRET is the tick bearer, needed here only when
+# something outside the Worker — an external pinger — has to hold it.
+# AUTH_SECRET=
+# SCHEDULER_SECRET=
 
 # Login identity. On a deployed Worker keep BOTH of these as Worker secrets
 # (`npm run secrets:put`) — a deploy overwrites `vars` from wrangler.jsonc.
@@ -18,8 +32,6 @@ ADMIN_PASSWORD=change-me
 
 # Optional. Scripts send: Authorization: Bearer $API_TOKEN (min 16 chars)
 # API_TOKEN=
-# Optional. Allows POST /api/internal/tick without the API token.
-# SCHEDULER_SECRET=
 # Optional. Enables the LinkedIn / Threads / X connect buttons (OAuth apps).
 # LINKEDIN_CLIENT_ID=
 # LINKEDIN_CLIENT_SECRET=
@@ -28,7 +40,8 @@ ADMIN_PASSWORD=change-me
 # X_CLIENT_ID=
 # X_CLIENT_SECRET=
 # Optional. Local dev only: skip the 2FA enrollment/verify flow. Honored only
-# when APP_URL is localhost — never in production. Set to 1 to enable.
+# when the instance resolves to a localhost URL — never on a real host.
+# Set to 1 to enable.
 # SKIP_TOTP=1
 # Optional. Enables video uploads (LinkedIn only: one MP4 per post, no images
 # mixed in). The upload path is wired but has not been verified end to end

@@ -23,10 +23,12 @@ import { createD1Db, first } from '$lib/server/db/client';
 import { ensureSchemaOnce } from '$lib/server/db/init-sql';
 import { users } from '$lib/server/db/schema';
 import { envFromPlatform } from '$lib/server/env';
+import type { AppEnv } from '$lib/server/env';
 import { memoryMediaStore, r2MediaStore } from '$lib/server/media';
 import { runSchedulerTick } from '$lib/server/scheduler';
 import { securityHeadersFor } from '$lib/server/security-headers';
-import { isMisconfiguredLocalInstance } from '$lib/domain/app-url';
+import { isPinnedAppUrl } from '$lib/domain/app-url';
+import { readStoredAppUrl, rememberAppUrl } from '$lib/server/app-settings';
 
 export function isPublicPath(path: string): boolean {
 	if (path === '/login' || path === '/login/setup-2fa' || path === '/login/verify') return true;
@@ -78,34 +80,44 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	await ensureSchemaOnce(platformEnv.DB);
-	const appEnv = envFromPlatform(platformEnv as unknown as Record<string, unknown>);
-	// Fail closed when a deployment still points APP_URL at localhost: that value
-	// switches off the example-secret guard and the SKIP_TOTP gate, and the
-	// "Deploy to Cloudflare" button offers it as a pre-filled prompt.
-	if (isMisconfiguredLocalInstance(appEnv.APP_URL, event.url.hostname)) {
-		const detail = `APP_URL is ${appEnv.APP_URL}, but this request arrived on ${event.url.hostname}. Set APP_URL to this deployment's URL and redeploy.`;
+	const db = createD1Db(platformEnv.DB);
+	event.locals.db = db;
+	// A deployment only learns its URL once it exists, so APP_URL is normally
+	// derived from the request itself (see $lib/domain/app-url) — and recorded
+	// below for the invocations that have no request: the cron tick and queue
+	// consumers. A pinned APP_URL skips the read entirely.
+	const configuredAppUrl =
+		typeof platformEnv.APP_URL === 'string' ? platformEnv.APP_URL : undefined;
+	const storedAppUrl = isPinnedAppUrl(configuredAppUrl) ? undefined : await readStoredAppUrl(db);
+	let appEnv: AppEnv;
+	try {
+		appEnv = await envFromPlatform(platformEnv as unknown as Record<string, unknown>, {
+			requestUrl: event.url.href,
+			storedAppUrl
+		});
+	} catch (err) {
+		// Fail closed, with something an operator can act on: without this the
+		// deployment that kept .dev.vars.example's values gets a bare 500 on
+		// every request. The example-value guard is what catches a public
+		// deployment that never replaced them.
+		const detail = err instanceof Error ? err.message : String(err);
 		console.error(`[env] ${detail}`);
-		if (path.startsWith('/api/')) {
-			return withPageSecurity(
-				path,
-				new Response(JSON.stringify({ error: detail }), {
-					status: 503,
-					headers: { 'content-type': 'application/json' }
-				}),
-				secureRequest
-			);
-		}
+		const action =
+			'Set real Worker secrets (`npm run secrets:put`, or the Cloudflare dashboard) and redeploy.';
 		return withPageSecurity(
 			path,
-			new Response(detail, {
-				status: 503,
-				headers: { 'content-type': 'text/plain; charset=utf-8' }
-			}),
+			path.startsWith('/api/')
+				? new Response(JSON.stringify({ error: `${detail}. ${action}` }), {
+						status: 503,
+						headers: { 'content-type': 'application/json' }
+					})
+				: new Response(`This deployment is not configured: ${detail}. ${action}`, {
+						status: 503,
+						headers: { 'content-type': 'text/plain; charset=utf-8' }
+					}),
 			secureRequest
 		);
 	}
-	const db = createD1Db(platformEnv.DB);
-	event.locals.db = db;
 	event.locals.env = appEnv;
 	// Fail closed in prod when the R2 binding is missing: persisting draft_media
 	// rows against a per-request in-memory Map silently loses bytes on next
@@ -187,6 +199,19 @@ export const handle: Handle = async ({ event, resolve }) => {
 					// runs; last_used_at is best-effort metadata either way.
 				}
 			}
+		}
+	}
+
+	// Remember the origin the instance is actually served from, once the request
+	// is authenticated — the scheduler has no request of its own to read it from,
+	// and only a signed-in visitor proves the hostname is the real one.
+	// Cookies only: a browser visit is the authority on the human-facing URL, and
+	// it keeps API clients (which may use a different host) from rewriting it.
+	if (appEnv.appUrlSource === 'request' && event.locals.authMethod === 'session') {
+		try {
+			event.platform?.ctx?.waitUntil(rememberAppUrl(db, appEnv.APP_URL));
+		} catch {
+			// No execution context (tests): the next request derives it again.
 		}
 	}
 

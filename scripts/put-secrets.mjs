@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 const keys = process.argv.slice(2);
+// The app derives AUTH_SECRET and SCHEDULER_SECRET from APP_ENCRYPTION_KEY and
+// takes APP_URL from the request, so those three are only uploaded when they are
+// deliberately set locally (the loop below skips anything absent).
 const wanted = keys.length
 	? keys
 	: [

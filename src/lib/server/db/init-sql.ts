@@ -154,6 +154,12 @@ CREATE TABLE IF NOT EXISTS \`notification_state\` (
 	\`last_failure_digest_at\` integer
 );
 
+CREATE TABLE IF NOT EXISTS \`app_settings\` (
+	\`key\` text PRIMARY KEY NOT NULL,
+	\`value\` text NOT NULL,
+	\`updated_at\` integer NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS \`totp_backup_codes\` (
 	\`id\` text PRIMARY KEY NOT NULL,
 	\`user_id\` text NOT NULL,
@@ -290,6 +296,11 @@ CREATE TABLE IF NOT EXISTS mfa_challenges (
 CREATE TABLE IF NOT EXISTS notification_state (
 	id text PRIMARY KEY NOT NULL,
 	last_failure_digest_at integer
+);
+CREATE TABLE IF NOT EXISTS app_settings (
+	key text PRIMARY KEY NOT NULL,
+	value text NOT NULL,
+	updated_at integer NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS mfa_challenges_token_uq ON mfa_challenges (token_hash);
 CREATE INDEX IF NOT EXISTS mfa_challenges_user_idx ON mfa_challenges (user_id);

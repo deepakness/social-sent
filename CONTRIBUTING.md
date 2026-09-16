@@ -13,7 +13,7 @@ npm run db:migrate:local
 npm run dev                      # http://localhost:5173
 ```
 
-`.dev.vars` needs `APP_URL`, `APP_ENCRYPTION_KEY` (`openssl rand -hex 32`), `AUTH_SECRET`, `ADMIN_EMAIL` and `ADMIN_PASSWORD`. Generate your own keys — the example file ships deliberate placeholders, and the app refuses to start with them unless `APP_URL` points at localhost.
+`.dev.vars` needs `APP_ENCRYPTION_KEY` (`openssl rand -hex 32`), `ADMIN_EMAIL` and `ADMIN_PASSWORD`. `AUTH_SECRET` and `SCHEDULER_SECRET` are derived from the encryption key unless you set them, and `APP_URL` is taken from the request when it is unset. Generate your own key — the example file ships a deliberate placeholder, and the app refuses to start with it unless the request is local.
 
 Set `SKIP_TOTP=1` to skip the authenticator dance while developing. It is honored only for a localhost `APP_URL`, so it can never weaken a deployment.
 

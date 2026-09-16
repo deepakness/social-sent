@@ -6,8 +6,35 @@ if (src.includes('__SOCIALSENT_HANDLERS__')) process.exit(0);
 
 const handlers = `
 /* __SOCIALSENT_HANDLERS__ */
+/**
+ * Bearer for the internal tick/publish calls: an explicit secret, the API
+ * token, or the value derived from APP_ENCRYPTION_KEY — the same derivation the
+ * Worker itself uses (src/lib/server/derived-secrets.ts). The label below is
+ * part of that contract and a unit test pins it to the app's constant.
+ */
+async function socialsentSchedulerSecret(env) {
+	if (env.SCHEDULER_SECRET) return env.SCHEDULER_SECRET;
+	if (env.API_TOKEN) return env.API_TOKEN;
+	if (!env.APP_ENCRYPTION_KEY) return null;
+	const encoder = new TextEncoder();
+	const key = await crypto.subtle.importKey(
+		'raw',
+		encoder.encode(env.APP_ENCRYPTION_KEY),
+		{ name: 'HMAC', hash: 'SHA-256' },
+		false,
+		['sign']
+	);
+	const sig = await crypto.subtle.sign(
+		'HMAC',
+		key,
+		encoder.encode('subkey:scheduler-secret:v1')
+	);
+	return Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function socialsentInternal(worker, env, ctx, path, body) {
-	const secret = env.SCHEDULER_SECRET || env.API_TOKEN;
+	const secret = await socialsentSchedulerSecret(env);
+	if (!secret) return null;
 	const req = new Request('https://socialsent.internal' + path, {
 		method: 'POST',
 		headers: {
@@ -23,12 +50,15 @@ export default {
 	fetch: (...args) => worker_default.fetch(...args),
 	scheduled(controller, env, ctx) {
 		if (env.ENABLE_CF_CRON !== '1') return;
+		// The internal call authenticates as a pinger would; with nothing to
+		// authenticate with it is a no-op rather than a 401 every minute.
+		if (!env.SCHEDULER_SECRET && !env.API_TOKEN && !env.APP_ENCRYPTION_KEY) return;
 		ctx.waitUntil(socialsentInternal(worker_default, env, ctx, '/api/internal/tick'));
 	},
 	async queue(batch, env, ctx) {
 		for (const msg of batch.messages) {
 			const res = await socialsentInternal(worker_default, env, ctx, '/api/internal/publish', msg.body);
-			if (!res.ok) msg.retry();
+			if (!res || !res.ok) msg.retry();
 			else msg.ack();
 		}
 	}

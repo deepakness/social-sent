@@ -52,13 +52,24 @@ interface Env {
 	 *  consumer instead of publishing inline. Off by default (see wrangler.jsonc). */
 	PUBLISH_QUEUE?: Queue;
 	ASSETS: { fetch: typeof fetch };
+	/** Optional public origin. Left unset (or left at localhost), the app adopts
+	 *  the origin of each request and remembers the first authenticated one;
+	 *  set it to pin a custom domain. See $lib/domain/app-url. */
 	APP_URL?: string;
+	/** Set to "1" to let scripts/wrap-worker.mjs run the scheduler on a cron
+	 *  trigger. Unset, scheduled invocations are a no-op. */
+	ENABLE_CF_CRON?: string;
 	/** Instance display name shown in the UI. Defaults to "SocialSent". */
 	APP_NAME?: string;
+	/** The only secret a deployment must bring: it encrypts the stored provider
+	 *  tokens, and AUTH_SECRET/SCHEDULER_SECRET are derived from it. */
 	APP_ENCRYPTION_KEY: string;
-	AUTH_SECRET: string;
+	/** Derived from APP_ENCRYPTION_KEY when unset (see derived-secrets.ts). */
+	AUTH_SECRET?: string;
 	ADMIN_EMAIL: string;
 	ADMIN_PASSWORD: string;
+	/** Derived from APP_ENCRYPTION_KEY when unset. Set it when something outside
+	 *  the Worker has to hold it, such as an external tick pinger. */
 	SCHEDULER_SECRET?: string;
 	API_TOKEN?: string;
 	RESEND_API_KEY?: string;
@@ -71,7 +82,8 @@ interface Env {
 	THREADS_APP_SECRET?: string;
 	X_CLIENT_ID?: string;
 	X_CLIENT_SECRET?: string;
-	/** Local-dev only: skips 2FA. Honored for localhost APP_URLs in dev builds. */
+	/** Local-dev only: skips 2FA. Honored only while the resolved URL is a
+	 *  localhost one, so it cannot weaken a real deployment. */
 	SKIP_TOTP?: string;
 	/** Set to "1" to enable video uploads (LinkedIn). The path is wired but not
 	 *  verified against the live API yet, so it is off by default: the editor

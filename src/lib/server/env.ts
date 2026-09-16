@@ -1,24 +1,32 @@
 import { z } from 'zod';
-import { isLocalAppUrl } from '$lib/domain/app-url';
+import { isLocalAppUrl, resolveAppUrl, type AppUrlSource } from '$lib/domain/app-url';
+import { deriveSecrets } from './derived-secrets';
 
 const envSchema = z.object({
-	// Required, with no localhost default: a deploy that forgets APP_URL should
-	// fail loudly rather than silently behave like a local instance (which would
-	// also drop the Secure cookie flag and switch off the guards below).
-	APP_URL: z.string().min(1),
+	// Optional, and deliberately with no default: the URL does not exist until
+	// the Worker does, so a deploy cannot set it. envFromPlatform resolves it
+	// per request from the request's own origin when this is unset (or still the
+	// localhost value .dev.vars.example ships). Set it to pin a custom domain or
+	// a deliberate public origin. See $lib/domain/app-url.
+	APP_URL: z.string().optional(),
 	// Instance display name: the UI title, header and login screen. Self-hosters
 	// can rename their instance from config without touching code.
 	APP_NAME: z.string().min(1).default('SocialSent'),
 	// 32+ chars (≈256-bit when random). TEST/dev use 64-hex; weak keys make the
 	// DB-stored OAuth/TOTP ciphertexts trivially brute-forceable on DB leak.
 	APP_ENCRYPTION_KEY: z.string().min(32),
-	AUTH_SECRET: z.string().min(16),
+	// Derived from APP_ENCRYPTION_KEY when unset (see derived-secrets.ts): set it
+	// only to pin an independent value.
+	AUTH_SECRET: z.string().min(16).optional(),
 	ADMIN_EMAIL: z.string().min(3),
 	ADMIN_PASSWORD: z.string().min(8),
+	// Derived from APP_ENCRYPTION_KEY when unset. Set it when something outside
+	// the Worker has to hold it, such as an external tick pinger.
 	SCHEDULER_SECRET: z.string().min(32).optional(),
 	API_TOKEN: z.string().min(16).optional(),
 	// Local-dev convenience: skip the 2FA enrollment/verify dance. Honored only
-	// when APP_URL is localhost (see readAppEnv) so it can never leak to prod.
+	// when the resolved URL is localhost (see readAppEnv) so it can never leak
+	// to prod — a localhost APP_URL on a real host resolves to that host.
 	SKIP_TOTP: z.string().optional(),
 	// In-progress feature: the LinkedIn video upload path is wired but not yet
 	// verified against the live API, so it stays off unless an instance opts in.
@@ -44,6 +52,15 @@ const envSchema = z.object({
 });
 
 export type AppEnv = z.infer<typeof envSchema> & {
+	/** An empty string means "no origin known yet"; only a scheduled or queue
+	 *  invocation can still be in that state (see resolveAppUrl). */
+	APP_URL: string;
+	/** Where APP_URL came from: set, derived from the request, or remembered
+	 *  from an earlier authenticated visit. */
+	appUrlSource: AppUrlSource;
+	/** Derived from APP_ENCRYPTION_KEY when not configured, so always present
+	 *  by the time anything signs a session. */
+	AUTH_SECRET: string;
 	skipTotp: boolean;
 	/** In-progress LinkedIn video uploads; off unless explicitly enabled. */
 	videoUploadEnabled: boolean;
@@ -62,7 +79,10 @@ export const PLACEHOLDER_SECRETS = new Set([
 	'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 ]);
 
-export function readAppEnv(source: Record<string, string | undefined>): AppEnv {
+export function readAppEnv(
+	source: Record<string, string | undefined>,
+	appUrlSource: AppUrlSource = 'configured'
+): AppEnv {
 	const parsed = envSchema.safeParse(source);
 	if (!parsed.success) {
 		const msg = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
@@ -72,7 +92,9 @@ export function readAppEnv(source: Record<string, string | undefined>): AppEnv {
 	// .dev.vars.example must never reach a public deployment, where a
 	// publicly-known encryption key would mean total credential decryption.
 	// APP_URL — not a build flag — decides what counts as local, because
-	// `wrangler dev` serves a production build on a developer's machine.
+	// `wrangler dev` serves a production build on a developer's machine; an
+	// unset or unparseable value is not local either, which is what keeps
+	// "deploy, then open it" safe.
 	const localInstance = isLocalAppUrl(parsed.data.APP_URL);
 	if (!localInstance) {
 		for (const key of ['APP_ENCRYPTION_KEY', 'AUTH_SECRET', 'ADMIN_PASSWORD'] as const) {
@@ -94,7 +116,14 @@ export function readAppEnv(source: Record<string, string | undefined>): AppEnv {
 	const videoUploadEnabled =
 		Boolean(source.ENABLE_VIDEO_UPLOAD) &&
 		!['0', 'false', 'no', 'off'].includes((source.ENABLE_VIDEO_UPLOAD ?? '').toLowerCase());
-	return { ...parsed.data, skipTotp, videoUploadEnabled };
+	return {
+		...parsed.data,
+		APP_URL: parsed.data.APP_URL ?? '',
+		AUTH_SECRET: parsed.data.AUTH_SECRET ?? '',
+		appUrlSource,
+		skipTotp,
+		videoUploadEnabled
+	};
 }
 
 function procEnv(): Record<string, string | undefined> {
@@ -107,10 +136,25 @@ function procEnv(): Record<string, string | undefined> {
 	}
 }
 
-export function envFromPlatform(platformEnv: Record<string, unknown> | undefined): AppEnv {
+export interface EnvResolutionOptions {
+	/** The full URL of the request being handled, when there is one. */
+	requestUrl?: string;
+	/** The origin remembered from an earlier authenticated visit. */
+	storedAppUrl?: string | null;
+}
+
+export async function envFromPlatform(
+	platformEnv: Record<string, unknown> | undefined,
+	options: EnvResolutionOptions = {}
+): Promise<AppEnv> {
 	const fallback = procEnv();
+	const resolved = resolveAppUrl({
+		configured: asString(platformEnv?.APP_URL) ?? fallback.APP_URL,
+		requestUrl: options.requestUrl,
+		stored: options.storedAppUrl
+	});
 	const src: Record<string, string | undefined> = {
-		APP_URL: asString(platformEnv?.APP_URL) ?? fallback.APP_URL,
+		APP_URL: resolved.url,
 		APP_NAME: asString(platformEnv?.APP_NAME) ?? fallback.APP_NAME,
 		APP_ENCRYPTION_KEY: asString(platformEnv?.APP_ENCRYPTION_KEY) ?? fallback.APP_ENCRYPTION_KEY,
 		AUTH_SECRET: asString(platformEnv?.AUTH_SECRET) ?? fallback.AUTH_SECRET,
@@ -133,7 +177,19 @@ export function envFromPlatform(platformEnv: Record<string, unknown> | undefined
 		SKIP_TOTP: asString(platformEnv?.SKIP_TOTP) ?? fallback.SKIP_TOTP,
 		ENABLE_VIDEO_UPLOAD: asString(platformEnv?.ENABLE_VIDEO_UPLOAD) ?? fallback.ENABLE_VIDEO_UPLOAD
 	};
-	return readAppEnv(src);
+	// AUTH_SECRET and SCHEDULER_SECRET come from the master key unless they were
+	// provided: that leaves APP_ENCRYPTION_KEY as the only secret a deployment
+	// must bring. Placeholders are still refused below — readAppEnv looks at the
+	// value the operator supplied, not at a derived one.
+	if (!src.AUTH_SECRET || !src.SCHEDULER_SECRET) {
+		const master = src.APP_ENCRYPTION_KEY;
+		if (master) {
+			const derived = await deriveSecrets(master);
+			src.AUTH_SECRET ??= derived.authSecret;
+			src.SCHEDULER_SECRET ??= derived.schedulerSecret;
+		}
+	}
+	return readAppEnv(src, resolved.source);
 }
 
 function asString(v: unknown): string | undefined {

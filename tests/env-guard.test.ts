@@ -72,9 +72,14 @@ describe('SKIP_TOTP', () => {
 });
 
 describe('APP_URL', () => {
-	it('is required: a deploy that forgets it fails loudly instead of acting local', () => {
+	it('is optional, but an unset one is never a local instance', () => {
 		const { APP_URL: _omitted, ...withoutAppUrl } = deployed;
-		expect(() => readAppEnv(withoutAppUrl)).toThrow(/APP_URL/);
+		// No URL known yet (a scheduled invocation before the first visit): the
+		// example values are still refused, and nothing pretends to be local.
+		expect(readAppEnv(withoutAppUrl).APP_URL).toBe('');
+		expect(() => readAppEnv({ ...withoutAppUrl, APP_ENCRYPTION_KEY: EXAMPLE_KEY })).toThrow(
+			/APP_ENCRYPTION_KEY must not be an example value/
+		);
 	});
 
 	it('treats loopback spellings as local', () => {
