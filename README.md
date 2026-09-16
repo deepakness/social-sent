@@ -1,5 +1,8 @@
 # SocialSent
 
+[![CI](https://github.com/deepakness/social-sent/actions/workflows/ci.yml/badge.svg)](https://github.com/deepakness/social-sent/actions/workflows/ci.yml)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/deepakness/social-sent)
+
 Minimal social scheduler for Mastodon, Bluesky, LinkedIn, Threads, and X. SvelteKit on the Cloudflare stack (Workers, D1, R2).
 
 Write a draft, optionally customize per platform, then publish now or schedule. Bring your own credentials: single-tenant by design, with one admin account on your own Cloudflare account.
@@ -46,37 +49,61 @@ Local `npm run dev` ticks due posts every 30s automatically.
 
 ## Deploy
 
-### 1. Create the storage
+### Fastest: the button
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/deepakness/social-sent)
+
+Cloudflare clones this repo into your own GitHub account, creates the Worker, **provisions the D1 database and the R2 bucket** (`wrangler.jsonc` deliberately leaves `database_id` empty for exactly that reason), asks for the secrets listed in `.dev.vars.example`, and wires up Workers Builds so later pushes deploy themselves.
+
+What it cannot do — three things you finish by hand:
+
+- **`APP_URL` is not known until the Worker exists.** The setup page offers the example value; leave it, then set the real URL and redeploy. **Until you do, the app answers 503 on a real host** rather than running on the example secrets — that is deliberate, it is the guard that stops a public deployment booting with `deadbeef…` as its encryption key.
+- **OAuth apps** for LinkedIn, Threads and X have to be registered at each provider (see [OAuth app setup](#oauth-app-setup)), and their redirect URIs need the final URL.
+- **Updates are yours.** The button makes a copy, not a fork: `git remote add upstream https://github.com/deepakness/social-sent && git pull upstream main`.
+
+### Or from the terminal
 
 ```sh
-npx wrangler d1 create socialsent
-npx wrangler r2 bucket create socialsent-media
+npm run setup
 ```
 
-Put the printed `database_id` into `wrangler.jsonc`.
+It signs in through `wrangler login` (no API token to mint), creates the D1 database and R2 bucket if they are missing, generates the secrets, writes them to `.dev.vars` and the Worker, applies the migrations, deploys, and sets `APP_URL` to the URL it just deployed to. It is safe to re-run: existing resources are reused, and an existing `APP_ENCRYPTION_KEY` is never rotated because rotating it would orphan every stored credential. `npm run setup -- --dry-run` prints the plan without touching anything.
 
-### 2. Set the Worker secrets
+### Or step by step
+
+Every command below goes through `scripts/wrangler.mjs`, which is what applies your `wrangler.personal.jsonc` and `WRANGLER_PROFILE` — plain `npx wrangler …` would target the generic config in the repo instead.
+
+#### 1. Create the storage
+
+```sh
+node scripts/wrangler.mjs d1 create socialsent        # prints the database_id
+node scripts/wrangler.mjs r2 bucket create socialsent-media
+```
+
+Before your first deploy, copy the committed config to `wrangler.personal.jsonc` (gitignored) and put the printed `database_id` and your bucket name there — see [Keeping your own deployment separate from upstream](#keeping-your-own-deployment-separate-from-upstream). Leaving `database_id` empty is also fine: Wrangler then creates the database itself on first deploy.
+
+#### 2. Set the Worker secrets
 
 These must be Worker secrets, not `[vars]`: a deploy overwrites `vars` with whatever `wrangler.jsonc` says, so anything committed there is public and gets reset on every deploy.
 
 ```sh
-npx wrangler secret put APP_ENCRYPTION_KEY   # openssl rand -hex 32
-npx wrangler secret put AUTH_SECRET          # openssl rand -hex 32
-npx wrangler secret put ADMIN_EMAIL
-npx wrangler secret put ADMIN_PASSWORD
-npx wrangler secret put APP_URL              # https://socialsent.<account>.workers.dev
-npx wrangler secret put API_TOKEN            # openssl rand -hex 32
+node scripts/wrangler.mjs secret put APP_ENCRYPTION_KEY   # openssl rand -hex 32
+node scripts/wrangler.mjs secret put AUTH_SECRET          # openssl rand -hex 32
+node scripts/wrangler.mjs secret put ADMIN_EMAIL
+node scripts/wrangler.mjs secret put ADMIN_PASSWORD
+node scripts/wrangler.mjs secret put APP_URL              # https://socialsent.<account>.workers.dev
+node scripts/wrangler.mjs secret put API_TOKEN            # openssl rand -hex 32
 ```
 
 Also set `SCHEDULER_SECRET` (`openssl rand -hex 32`) if you want the tick endpoint to work — see [Scheduling](#scheduling). Optional extras:
 
 ```sh
 # Public media origin for Meta's crawler (an R2 custom domain behind Cloudflare's cache)
-npx wrangler secret put MEDIA_PUBLIC_BASE_URL
+node scripts/wrangler.mjs secret put MEDIA_PUBLIC_BASE_URL
 # Failure digest via Resend
-npx wrangler secret put RESEND_API_KEY
-npx wrangler secret put NOTIFY_EMAIL
-npx wrangler secret put NOTIFY_FROM
+node scripts/wrangler.mjs secret put RESEND_API_KEY
+node scripts/wrangler.mjs secret put NOTIFY_EMAIL
+node scripts/wrangler.mjs secret put NOTIFY_FROM
 ```
 
 Instead of typing these one by one, `npm run secrets:put` uploads the keys it manages from `.dev.vars` (and `.api-token` for `API_TOKEN`). That allowlist covers the app's own secrets — the notification variables above are not in it, set them yourself. It refuses to upload a localhost `APP_URL`.
@@ -122,6 +149,17 @@ npx wrangler secret put ADMIN_PASSWORD
 ```
 
 Changing `ADMIN_EMAIL` is a bigger deal: the app keeps exactly one user row and deletes any user whose email is not `ADMIN_EMAIL`, so the old row (and everything cascading from it — drafts, connections, sessions) is removed on the next request. Change it deliberately, and expect to reconnect your accounts.
+
+## Updating
+
+```sh
+git pull                     # or: git pull upstream main, if you deployed from the button
+npm ci
+npm run db:migrate:remote    # applies any new migrations to your D1 database
+npm run deploy
+```
+
+`APP_NAME`, `APP_URL` and the rest of your configuration live in `wrangler.personal.jsonc` and Worker secrets, so a pull never overwrites them. Deploying from the button instead? Push the same changes to your own copy (or pull from upstream first) and Workers Builds takes it from there.
 
 ## Keeping your own deployment separate from upstream
 

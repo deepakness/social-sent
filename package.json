@@ -27,6 +27,25 @@
 	"engines": {
 		"node": ">=22.12.0"
 	},
+	"cloudflare": {
+		"bindings": {
+			"APP_ENCRYPTION_KEY": {
+				"description": "Encrypts stored provider tokens and signs media URLs. Generate one with `openssl rand -hex 32` \u2014 64 hex characters. Losing it means reconnecting every account; never reuse this example value."
+			},
+			"AUTH_SECRET": {
+				"description": "Signs session cookies and OAuth state. Generate one with `openssl rand -hex 32`. Changing it signs everybody out."
+			},
+			"ADMIN_EMAIL": {
+				"description": "The single account's login email. Changing it later deletes the old user row and everything attached to it."
+			},
+			"ADMIN_PASSWORD": {
+				"description": "The login password. Pick a long one, and turn on the authenticator app on first sign-in."
+			},
+			"APP_URL": {
+				"description": "This deployment's public URL, e.g. `https://sent.<your-subdomain>.workers.dev`. The app refuses to run on a real host while this still says localhost, and OAuth callbacks are built from it \u2014 set it once the URL is known and redeploy."
+			}
+		}
+	},
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build && node scripts/wrap-worker.mjs",
@@ -43,7 +62,8 @@
 		"deploy:worker": "npm test && npm run build && node scripts/wrangler.mjs deploy",
 		"secrets:put": "node scripts/put-secrets.mjs",
 		"db:migrate:local": "node scripts/wrangler.mjs d1 migrations apply DB --local",
-		"db:migrate:remote": "node scripts/wrangler.mjs d1 migrations apply DB --remote"
+		"db:migrate:remote": "node scripts/wrangler.mjs d1 migrations apply DB --remote",
+		"setup": "node scripts/setup.mjs"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",

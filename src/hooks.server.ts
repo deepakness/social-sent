@@ -26,6 +26,7 @@ import { envFromPlatform } from '$lib/server/env';
 import { memoryMediaStore, r2MediaStore } from '$lib/server/media';
 import { runSchedulerTick } from '$lib/server/scheduler';
 import { securityHeadersFor } from '$lib/server/security-headers';
+import { isMisconfiguredLocalInstance } from '$lib/domain/app-url';
 
 export function isPublicPath(path: string): boolean {
 	if (path === '/login' || path === '/login/setup-2fa' || path === '/login/verify') return true;
@@ -78,6 +79,23 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	await ensureSchemaOnce(platformEnv.DB);
 	const appEnv = envFromPlatform(platformEnv as unknown as Record<string, unknown>);
+	// Fail closed when a deployment still points APP_URL at localhost: that value
+	// switches off the example-secret guard and the SKIP_TOTP gate, and the
+	// "Deploy to Cloudflare" button offers it as a pre-filled prompt.
+	if (isMisconfiguredLocalInstance(appEnv.APP_URL, event.url.hostname)) {
+		const detail = `APP_URL is ${appEnv.APP_URL}, but this request arrived on ${event.url.hostname}. Set APP_URL to this deployment's URL and redeploy.`;
+		console.error(`[env] ${detail}`);
+		if (path.startsWith('/api/')) {
+			return new Response(JSON.stringify({ error: detail }), {
+				status: 503,
+				headers: { 'content-type': 'application/json' }
+			});
+		}
+		return new Response(detail, {
+			status: 503,
+			headers: { 'content-type': 'text/plain; charset=utf-8' }
+		});
+	}
 	const db = createD1Db(platformEnv.DB);
 	event.locals.db = db;
 	event.locals.env = appEnv;

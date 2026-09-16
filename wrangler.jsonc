@@ -31,16 +31,22 @@
 		{
 			"binding": "DB",
 			"database_name": "socialsent",
-			// Replace with the id printed by: npx wrangler d1 create socialsent
-			"database_id": "REPLACE_WITH_YOUR_DATABASE_ID",
+			// Empty on purpose: it tells Wrangler (and the "Deploy to Cloudflare"
+			// button) to create the database and bind it. Any value here — even a
+			// placeholder string — is read as "this database already exists", and
+			// provisioning is skipped. Your own deployment sets the real id in
+			// wrangler.personal.jsonc, or you can leave it empty and let Wrangler
+			// create it on first deploy.
+			"database_id": "",
 			"migrations_dir": "drizzle"
 		}
 	],
 	"r2_buckets": [
 		{
-			"binding": "MEDIA",
-			// Create it first: npx wrangler r2 bucket create socialsent-media
-			"bucket_name": "socialsent-media"
+			"binding": "MEDIA"
+			// No bucket_name on purpose: Wrangler derives one from the Worker name
+			// and provisions it (an empty string is a config error, not "unset").
+			// Your own deployment names its bucket in wrangler.personal.jsonc.
 		}
 	],
 	// Non-secret vars only. Keys, passwords and OAuth client secrets belong in
