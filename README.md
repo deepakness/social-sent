@@ -43,13 +43,35 @@ npm run check     # svelte-check
 npm run build     # production worker + wrap scheduled handler
 ```
 
-Local `npm run dev` ticks due posts every 30s automatically.
+Local `npm run dev` ticks due posts every 30s automatically. When anything looks
+wrong — locally or on a deployment — `npm run doctor` reports what it finds and
+what to do about it.
 
 `npm run test:e2e` runs the Playwright suite against a local build of the Worker. It keeps to itself: its D1/R2 state lives in `.wrangler/e2e-state`, so your `npm run dev` data is never touched. If you have no `.dev.vars`, the suite seeds one from `tests/e2e/fixtures/dev.vars` (an existing file is used as-is, so put `SKIP_TOTP=1` in yours to match the path CI takes).
 
 ## Deploy
 
-### Fastest: the button
+There are two paths. The one command below is the most reliable — it needs no
+GitHub integration and no Workers Builds — and the button is there if you would
+rather not open a terminal. Either way, `npm run doctor` checks the result
+afterwards, and [DEPLOY.md](DEPLOY.md) has the troubleshooting.
+
+### Recommended: one command
+
+```sh
+git clone --depth 1 --branch stable https://github.com/deepakness/social-sent.git sent
+cd sent && npm install && npm run setup
+```
+
+`stable` is a tagged release; use `main` when you want the newest commits, and
+see [Updating](#updating) for how to move between them. `npm run setup` is the
+same on any path: idempotent, safe to re-run, and it prints what it did.
+
+It signs in through `wrangler login` (no API token to mint), creates the D1 database and R2 bucket if they are missing, generates `APP_ENCRYPTION_KEY`, writes it to `.dev.vars` and to the Worker, applies the migrations, deploys, and pins `APP_URL` to the URL it just deployed to — when the deploy prints one; otherwise it prints the command to set it yourself. (You can also skip that: an unset `APP_URL` follows the host each request arrives on.)
+
+**It is safe to re-run, and it will not damage a running deployment.** Resources that exist are reused, a `database_id` already in your config is never replaced, and any secret already set on the Worker is left alone — rotating `APP_ENCRYPTION_KEY` orphans every stored credential, and changing `ADMIN_EMAIL` deletes the old user row and everything cascading from it, so neither happens by accident. Pass `--rotate-secrets` or `--set-admin` when that is what you want. `npm run setup -- --dry-run` prints the plan and only performs read-only calls.
+
+### Or: the Deploy to Cloudflare button
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/deepakness/social-sent)
 
@@ -72,17 +94,12 @@ What it cannot do — two things you finish by hand:
 - **OAuth apps** for LinkedIn, Threads and X have to be registered at each provider (see [OAuth app setup](#oauth-app-setup)), and their redirect URIs need the final URL.
 - **Updates are yours.** The button makes a copy, not a fork: `git remote add upstream https://github.com/deepakness/social-sent && git pull upstream main`.
 
-### Or from the terminal
+If the form reports that your GitHub authorization has expired, or a build fails
+while cloning the source repository, the fix is in
+[DEPLOY.md](DEPLOY.md#troubleshooting) — both have a documented way out, and the
+one-command path above needs neither Workers Builds nor the GitHub App.
 
-```sh
-npm run setup
-```
-
-It signs in through `wrangler login` (no API token to mint), creates the D1 database and R2 bucket if they are missing, generates `APP_ENCRYPTION_KEY`, writes it to `.dev.vars` and to the Worker, applies the migrations, deploys, and pins `APP_URL` to the URL it just deployed to — when the deploy prints one; otherwise it prints the command to set it yourself. (You can also skip that: an unset `APP_URL` follows the host each request arrives on.)
-
-**It is safe to re-run, and it will not damage a running deployment.** Resources that exist are reused, a `database_id` already in your config is never replaced, and any secret already set on the Worker is left alone — rotating `APP_ENCRYPTION_KEY` orphans every stored credential, and changing `ADMIN_EMAIL` deletes the old user row and everything cascading from it, so neither happens by accident. Pass `--rotate-secrets` or `--set-admin` when that is what you want. `npm run setup -- --dry-run` prints the plan and only performs read-only calls.
-
-### Or step by step
+### Or: step by step
 
 Every command below goes through `scripts/wrangler.mjs`, which is what applies your `wrangler.personal.jsonc` and `WRANGLER_PROFILE` — plain `npx wrangler …` would target the generic config in the repo instead.
 
@@ -163,7 +180,13 @@ If you set `ADMIN_EMAIL` / `ADMIN_PASSWORD` as Worker secrets, those stay author
 git pull                     # or: git pull upstream main, if you deployed from the button
 npm ci
 npm run deploy:release       # unit tests, remote D1 migrations, build, deploy
+npm run doctor               # optional: verify secrets, database, bucket and deployment
 ```
+
+Installed from `stable`? Pull that branch (`git pull origin stable`) or move to a
+release tag (`git tag` lists them) — those are the states the one-command install
+and the docs are tested against. A button-created copy tracks `main` unless you
+change it.
 
 `APP_URL`, the instance name and the rest of your configuration live in `wrangler.personal.jsonc`, Worker secrets and D1, so a pull never overwrites them. Deploying from the button instead? Push the same changes to your own copy (or pull from upstream first) and Workers Builds takes it from there.
 
