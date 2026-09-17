@@ -52,7 +52,8 @@
 		"secrets:put": "node scripts/put-secrets.mjs",
 		"db:migrate:local": "node scripts/wrangler.mjs d1 migrations apply DB --local",
 		"db:migrate:remote": "node scripts/wrangler.mjs d1 migrations apply DB --remote",
-		"setup": "node scripts/setup.mjs"
+		"setup": "node scripts/setup.mjs",
+		"doctor": "node scripts/doctor.mjs"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",

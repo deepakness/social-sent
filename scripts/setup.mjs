@@ -158,8 +158,11 @@ function readDevVars() {
 		const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
 		if (!match) continue;
 		let raw = match[2].trim();
+		// Strip a trailing comment first, then unquote: dotenv accepts
+		// `KEY="value" # comment`, and the value is the quoted part.
+		const comment = raw.search(/\s+#/);
+		if (comment !== -1) raw = raw.slice(0, comment).trim();
 		if (/^".*"$/.test(raw) || /^'.*'$/.test(raw)) raw = raw.slice(1, -1);
-		else raw = raw.replace(/\s+#.*$/, '').trim();
 		values.set(match[1], raw);
 	}
 	return values;
