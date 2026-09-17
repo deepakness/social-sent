@@ -53,11 +53,19 @@ Local `npm run dev` ticks due posts every 30s automatically.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/deepakness/social-sent)
 
-Cloudflare clones this repo into your own GitHub account, creates the Worker, **provisions the D1 database and the R2 bucket** (`wrangler.jsonc` deliberately leaves `database_id` empty for exactly that reason), asks for the three secrets in `.dev.vars.example`, and wires up Workers Builds so later pushes deploy themselves.
+Cloudflare clones this repo into your own GitHub account, creates the Worker, **provisions the D1 database and the R2 bucket** (`wrangler.jsonc` deliberately leaves `database_id` empty for exactly that reason), asks for one secret, and wires up Workers Builds so later pushes deploy themselves.
+
+| Form field                                   | What to do                                                                                                                                                                      |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Git account, private repo, project name      | Leave as they are. The project name becomes the Worker name.                                                                                                                    |
+| D1 database, location hint, read replication | Accept **Create new** and the prefilled `socialsent`. The binding uses the database id, so the name is only a label.                                                            |
+| R2 bucket                                    | `socialsent-media` is prefilled. R2 names are unique across all Cloudflare accounts, so if the form says it already exists, change it — nothing in the app depends on the name. |
+| `APP_ENCRYPTION_KEY`                         | **The one secret.** Run `openssl rand -hex 32` in a terminal and paste the result. It encrypts the tokens of every account you connect; changing it later disconnects them all. |
+| Build command, deploy command                | Leave as detected (`npm run build`, `npm run deploy`).                                                                                                                          |
+| Builds for non-production branches           | Optional. Other branches get built, but with `preview_urls` off no public preview hostname is created.                                                                          |
+| Protect with Cloudflare Access               | Leave off unless you add the exemptions in [Putting it behind Cloudflare Access](#putting-it-behind-cloudflare-access). The app has its own login.                              |
 
 Nothing needs to be configured for the URL: a deployment cannot know it before the Worker exists, so the app uses the origin each request arrives on (and remembers it for the cron tick, which has no request of its own). Set `APP_URL` only to pin a deliberate origin.
-
-The form asks for exactly one secret, `APP_ENCRYPTION_KEY`. Paste a value from `openssl rand -hex 32` (the field starts empty, and the deploy is refused while it is); everything else is derived or set in the app afterwards. The login is created on your first visit, and scheduled posts publish themselves through the cron trigger in `wrangler.jsonc`.
 
 What it cannot do — two things you finish by hand:
 
@@ -190,6 +198,18 @@ The instance name — shown in the page title, the header, and the login screen 
 `AUTH_SECRET` (signs sessions and OAuth state) and `SCHEDULER_SECRET` (the tick bearer) are derived from it with HMAC-SHA256, so there is nothing else to invent or keep in sync. Set either one explicitly to override the derivation, and delete it to go back. Changing `AUTH_SECRET` signs everybody out. You need `SCHEDULER_SECRET` only when something outside the Worker has to hold the tick bearer, such as an external pinger (see [Scheduling](#scheduling)).
 
 The login has two modes. Left unset, the account is created in the browser on the first visit and lives in D1 — changed in **Settings → Login**. Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` (both or neither, as Worker secrets rather than vars) and they stay authoritative instead; the sweep then removes any other user row. Someone else reaching a fresh instance before you can claim it, so set them, or claim it immediately after deploying.
+
+## Putting it behind Cloudflare Access
+
+Optional. The app has its own login, so Access is an extra gate for an instance only you (or a small team) reach — it does not replace the login, and it does not replace the secrets: `APP_ENCRYPTION_KEY` still encrypts your tokens, and `AUTH_SECRET` still signs sessions, OAuth state and media URLs.
+
+If you enable it (Workers → your Worker → **Access**, or the `workers.dev` one-click), three things need exemptions or they break:
+
+- **Media for Meta's crawler.** `/api/media/public/*` must stay reachable without a login, or Threads and Mastodon cannot fetch images. Add a separate Access application for that path with a **Bypass / Include Everyone** policy.
+- **Scripts and pingers.** Anything calling the API with a bearer key, or the tick endpoint, needs a **Service Auth** policy and a service token (`CF-Access-Client-Id` / `CF-Access-Client-Secret`) alongside the app's own key. A bypass policy would also work, but it is neither authenticated nor logged.
+- **OAuth callbacks.** If a provider redirects back while your Access session has expired, Access intercepts it before the app sees the code. Bypass `/api/connections/*/callback` if that happens.
+
+The cron trigger is unaffected: the scheduled handler calls the Worker in-process, never over HTTP. Access also requires Zero Trust to be enabled, which asks for payment details even on the free plan (50 users; service tokens do not consume seats), and on `workers.dev` it is set up through the Workers dashboard flow because the Zero Trust domain picker only lists domains from a zone. An account-wide "Protect all Workers" setting applies to new deployments too, and needs the same exemptions.
 
 ## Script / app API
 

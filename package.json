@@ -30,7 +30,7 @@
 	"cloudflare": {
 		"bindings": {
 			"APP_ENCRYPTION_KEY": {
-				"description": "The only secret this app needs. Generate one with `openssl rand -hex 32` \u2014 64 hex characters. It encrypts stored provider tokens; `AUTH_SECRET` and `SCHEDULER_SECRET` are derived from it, and the login is created on first visit. Losing it means reconnecting every account."
+				"description": "Required. Run \"openssl rand -hex 32\" in a terminal and paste the result. Already have a key? Reuse it; changing it disconnects every account."
 			}
 		}
 	},
