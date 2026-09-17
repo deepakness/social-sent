@@ -261,8 +261,14 @@ export function formatReport(checks) {
 	return lines.join('\n');
 }
 
-/** Run a command through the repo wrapper, captured and bounded. */
-/** @param {string} command @param {string[]} args @param {{ timeout?: number }} [options] @returns {RunResult} */
+/**
+ * Run a command through the repo wrapper, captured and bounded.
+ *
+ * @param {string} command
+ * @param {string[]} args
+ * @param {{ timeout?: number }} [options]
+ * @returns {RunResult}
+ */
 function run(command, args, { timeout = 90_000 } = {}) {
 	const result = spawnSync(command, args, { encoding: 'utf8', timeout });
 	return {
@@ -362,6 +368,7 @@ async function main() {
 
 	const d1Name = config?.d1_databases?.[0]?.database_name;
 	const d1Id = config?.d1_databases?.[0]?.database_id;
+	const binding = config?.d1_databases?.[0]?.binding ?? 'DB';
 	const bucket = config?.r2_buckets?.[0]?.bucket_name;
 
 	if (account?.loggedIn) {
@@ -448,7 +455,7 @@ async function main() {
 			}
 		}
 
-		const migrations = wrangler(['d1', 'migrations', 'list', 'DB', '--remote'], {
+		const migrations = wrangler(['d1', 'migrations', 'list', binding, '--remote'], {
 			timeout: 120_000
 		});
 		const pending = countUnappliedMigrations(`${migrations.stdout}${migrations.stderr}`);
@@ -484,8 +491,15 @@ async function main() {
 					}
 		);
 	} else {
-		for (const id of ['d1', 'r2', 'secrets', 'migrations', 'worker']) {
-			checks.push({ id, status: 'skip', label: `${id} check skipped (not signed in)` });
+		const skipped = {
+			d1: 'D1 database',
+			r2: 'R2 bucket',
+			secrets: 'Worker secrets',
+			migrations: 'D1 migrations',
+			worker: 'Worker deployment'
+		};
+		for (const [id, name] of Object.entries(skipped)) {
+			checks.push({ id, status: 'skip', label: `${name} check skipped (not signed in)` });
 		}
 	}
 
@@ -524,7 +538,7 @@ async function main() {
 		checks.push({
 			id: 'app',
 			status: 'skip',
-			label: 'Deployment probe skipped',
+			label: appUrl ? `Deployment probe skipped (${appUrl} is local)` : 'Deployment probe skipped',
 			detail: 'pass --app-url https://your-worker.example to check the running app'
 		});
 	}
