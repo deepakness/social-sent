@@ -9,8 +9,8 @@ R2 asks for a payment method on file even on the free tier.
 | Path                                       | Terminal | GitHub integration   | Best for                                           |
 | ------------------------------------------ | -------- | -------------------- | -------------------------------------------------- |
 | [One command](#one-command)                | yes      | no                   | the reliable default, and what CI-like setups want |
-| [Deploy to Cloudflare button](#the-button) | no       | yes (Workers Builds) | push-to-deploy without touching a terminal         |
 | [Step by step](#step-by-step)              | yes      | optional             | doing it by hand, or debugging an unusual setup    |
+| [Deploy to Cloudflare button](#the-button) | no       | yes (Workers Builds) | push-to-deploy without touching a terminal         |
 
 ### One command
 

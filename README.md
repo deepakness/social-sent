@@ -6,7 +6,7 @@ Minimal social scheduler for Mastodon, Bluesky, LinkedIn, Threads, and X. Svelte
 
 Write a draft, optionally customize per platform, then publish now or schedule. Bring your own credentials: single-tenant by design, with one admin account on your own Cloudflare account.
 
-Ready to run your own? [Deploy](#deploy) takes one command — or the Deploy to Cloudflare button, if you would rather not open a terminal.
+Ready to run your own? [Deploy](#deploy) takes one command.
 
 ## Stack
 
@@ -52,28 +52,59 @@ what to do about it.
 
 ## Deploy
 
-There are two paths. The one command below is the most reliable — it needs no
-GitHub integration and no Workers Builds — and the button is there if you would
-rather not open a terminal. Either way, `npm run doctor` checks the result
-afterwards, and [DEPLOY.md](DEPLOY.md) has the troubleshooting.
+Three ways. Whichever you pick, `npm run doctor` verifies the result afterwards
+and [DEPLOY.md](DEPLOY.md) has the troubleshooting.
 
-### Recommended: one command
+1. **[One command](#one-command)** — recommended, needs a terminal.
+2. **[Step by step](#step-by-step)** — the same result, every command visible.
+3. **[Deploy to Cloudflare button](#deploy-to-cloudflare-button)** — no terminal.
+
+### One command
 
 ```sh
 git clone --depth 1 --branch stable https://github.com/deepakness/social-sent.git sent
 cd sent && npm install && npm run setup
 ```
 
-`stable` is the branch releases are cut from and what these docs are tested
-against; tags mark individual releases, and `main` is where new commits land
-first — see [Updating](#updating) for moving between them. `npm run setup` is
-the same on any path: idempotent, safe to re-run, and it prints what it did.
+`setup` runs `wrangler login`, creates the D1 database and the R2 bucket if they
+are missing, generates `APP_ENCRYPTION_KEY`, applies migrations, deploys, and
+sets `APP_URL`. It is safe to re-run — resources that exist and secrets that are
+already set are left alone — and `npm run setup -- --dry-run` prints the plan
+without changing anything. `stable` is the branch these docs are tested against;
+see [Updating](#updating) for tags and `main`.
 
-It signs in through `wrangler login` (no API token to mint), creates the D1 database and R2 bucket if they are missing, generates `APP_ENCRYPTION_KEY`, writes it to `.dev.vars` and to the Worker, applies the migrations, deploys, and pins `APP_URL` to the URL it just deployed to — when the deploy prints one; otherwise it prints the command to set it yourself. (You can also skip that: an unset `APP_URL` follows the host each request arrives on.)
+### Step by step
 
-**It is safe to re-run, and it will not damage a running deployment.** Resources that exist are reused, a `database_id` already in your config is never replaced, and any secret already set on the Worker is left alone — rotating `APP_ENCRYPTION_KEY` orphans every stored credential, and changing `ADMIN_EMAIL` deletes the old user row and everything cascading from it, so neither happens by accident. Pass `--rotate-secrets` or `--set-admin` when that is what you want. `npm run setup -- --dry-run` prints the plan and only performs read-only calls.
+Needs Node 22.12+, a Cloudflare account (`npx wrangler login`), and R2 enabled —
+Cloudflare asks for a payment method on file even for free-tier usage. Every
+command goes through `scripts/wrangler.mjs`, which applies your
+`wrangler.personal.jsonc` and `WRANGLER_PROFILE`; plain `npx wrangler …` would
+use the generic config in the repo.
 
-### Or: the Deploy to Cloudflare button
+```sh
+# The one required secret. Keep secrets out of `vars`: a deploy overwrites those.
+node scripts/wrangler.mjs secret put APP_ENCRYPTION_KEY   # openssl rand -hex 32
+
+# Build and upload. The first deploy creates the D1 database and the R2 bucket.
+npm run build && npm run deploy
+```
+
+Open the URL the deploy prints and create your account on the first visit. A
+fresh database needs no migration step — the schema bootstraps itself on the
+first request; an older one gets new migrations with `npm run db:migrate:remote`.
+`npm run deploy:release` runs tests, migrations, build and deploy in one go.
+
+To choose a location, or to reuse a database or bucket you already have, create
+them first: `node scripts/wrangler.mjs d1 create socialsent` prints an id for
+`wrangler.personal.jsonc`, and `node scripts/wrangler.mjs r2 bucket create
+socialsent-media` makes the bucket. Otherwise the deploy creates both.
+
+Optional secrets — `API_TOKEN` for scripts, `SCHEDULER_SECRET` for an external
+pinger, the OAuth client ids, Resend for failure emails, `MEDIA_PUBLIC_BASE_URL`
+for Meta's crawler — are listed under [Secrets](#secrets). Upload them in one go
+with `npm run secrets:put`.
+
+### Deploy to Cloudflare button
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/deepakness/social-sent)
 
@@ -96,53 +127,9 @@ What it cannot do — two things you finish by hand:
 - **OAuth apps** for LinkedIn, Threads and X have to be registered at each provider (see [OAuth app setup](#oauth-app-setup)), and their redirect URIs need the final URL.
 - **Updates are yours.** The button makes a copy, not a fork: `git remote add upstream https://github.com/deepakness/social-sent && git pull upstream main`.
 
-If the form reports that your GitHub authorization has expired, or a build fails
-while cloning the source repository, the fix is in
-[DEPLOY.md](DEPLOY.md#troubleshooting) — both have a documented way out, and the
-one-command path above needs neither Workers Builds nor the GitHub App.
-
-### Or: step by step
-
-Every command below goes through `scripts/wrangler.mjs`, which is what applies your `wrangler.personal.jsonc` and `WRANGLER_PROFILE` — plain `npx wrangler …` would target the generic config in the repo instead.
-
-#### 1. Create the storage
-
-```sh
-node scripts/wrangler.mjs d1 create socialsent        # prints the database_id
-node scripts/wrangler.mjs r2 bucket create socialsent-media
-```
-
-Before your first deploy, copy the committed config to `wrangler.personal.jsonc` (gitignored) and put the printed `database_id` and your bucket name there — see [Keeping your own deployment separate from upstream](#keeping-your-own-deployment-separate-from-upstream). Leaving `database_id` empty is also fine: Wrangler then creates the database itself on first deploy.
-
-#### 2. Set the Worker secrets
-
-These must be Worker secrets, not `[vars]`: a deploy overwrites `vars` with whatever `wrangler.jsonc` says, so anything committed there is public and gets reset on every deploy.
-
-```sh
-node scripts/wrangler.mjs secret put APP_ENCRYPTION_KEY   # openssl rand -hex 32
-node scripts/wrangler.mjs secret put API_TOKEN            # openssl rand -hex 32
-```
-
-That is the whole list: `AUTH_SECRET` and `SCHEDULER_SECRET` are derived from `APP_ENCRYPTION_KEY`, `APP_URL` is derived from the request, and the login is created on the first visit — see [Secrets](#secrets). Optional extras:
-
-```sh
-# Public media origin for Meta's crawler (an R2 custom domain behind Cloudflare's cache)
-node scripts/wrangler.mjs secret put MEDIA_PUBLIC_BASE_URL
-# Failure digest via Resend
-node scripts/wrangler.mjs secret put RESEND_API_KEY
-node scripts/wrangler.mjs secret put NOTIFY_EMAIL
-node scripts/wrangler.mjs secret put NOTIFY_FROM
-```
-
-Instead of typing these one by one, `npm run secrets:put` uploads the keys it manages from `.dev.vars` (and `.api-token` for `API_TOKEN`). That allowlist covers the app's own secrets — the notification variables above are not in it, set them yourself. It refuses to upload a localhost `APP_URL`.
-
-#### 3. Deploy
-
-```sh
-npm run build && npm run deploy
-```
-
-`npm run build` produces the Worker bundle and `npm run deploy` uploads it — the same split Workers Builds uses on every push. `npm run deploy:release` runs the whole path in one go: unit tests, remote D1 migrations, build, deploy.
+An expired GitHub authorization or a failed seed-repo clone has a way out in
+[DEPLOY.md](DEPLOY.md#troubleshooting); the one-command path needs neither the
+GitHub App nor Workers Builds.
 
 ### Scheduling
 
