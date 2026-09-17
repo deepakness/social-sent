@@ -165,6 +165,9 @@ test('schedule panel requires accounts and outbox loads', async () => {
 
 test('settings defaults persist', async () => {
 	await page.goto('/settings');
+	// The version is injected at build time and shown here, so a bug report can
+	// name it; asserting it also proves the vite define reached the bundle.
+	await expect(page.getByText(/^Version \d+\.\d+\.\d+/)).toBeVisible();
 	await page.getByLabel('Mastodon visibility').selectOption('private');
 	await page.getByRole('button', { name: 'Save defaults' }).click();
 	await expect(page.getByText('Defaults saved')).toBeVisible();
