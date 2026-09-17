@@ -48,6 +48,7 @@
 	let accountConfirm = $state('');
 	let accountBusy = $state(false);
 	let accountLoading = $state(true);
+	let schedulerMessage = $state<string | null>(null);
 	let profilePictureUrl = $state('');
 	// The name the server last accepted: the profile form's Save button stays
 	// disabled until the draft drifts from it. The picture is not tracked here
@@ -100,15 +101,20 @@
 		if (!keyLoaded) keyLoading = true;
 		err = null;
 		try {
-			const [totp, settings, conns, key, account] = await Promise.all([
+			const [totp, settings, conns, key, account, health] = await Promise.all([
 				fetch('/api/auth/totp/status'),
 				fetch('/api/settings'),
 				fetch('/api/connections'),
 				fetch('/api/key'),
-				fetch('/api/account')
+				fetch('/api/account'),
+				fetch('/api/scheduler/health')
 			]);
 			// An expired session is not a broken setting: sign in again.
-			if ([totp, settings, conns, key, account].some((res) => sessionExpiredIfUnauthorized(res))) {
+			if (
+				[totp, settings, conns, key, account, health].some((res) =>
+					sessionExpiredIfUnauthorized(res)
+				)
+			) {
 				err = 'Your session expired — sign in again';
 				return;
 			}
@@ -145,6 +151,10 @@
 				accountEmail = a.email ?? '';
 				accountManaged = Boolean(a.managedByEnv);
 				accountLoading = false;
+			}
+			if (health.ok) {
+				const h = await health.json();
+				schedulerMessage = h.message ?? null;
 			}
 			// A 5xx resolves rather than rejecting, so check the status too.
 			if (!settings.ok || !key.ok) err = 'Could not load your settings';
@@ -992,6 +1002,9 @@
 			<h2 class="mb-2 text-[17px] font-extrabold tracking-tight text-stone-900">Instance</h2>
 			<p class="mb-6 max-w-md text-[13px] leading-relaxed font-medium text-stone-500">
 				Shown in the page title, the header and the login screen. Leave it empty for the default.
+			</p>
+			<p class="mb-5 text-[12px] font-medium text-stone-500">
+				Version {__APP_VERSION__}{schedulerMessage ? ` · ${schedulerMessage}` : ''}
 			</p>
 			<form class="flex flex-col gap-3 sm:flex-row sm:items-center" onsubmit={saveInstanceName}>
 				<input

@@ -5,6 +5,9 @@ import type { MediaStore } from '$lib/server/media';
 import type { QueueLike } from '$lib/server/scheduler';
 
 declare global {
+	/** Injected by vite.config.ts from package.json — the running version. */
+	const __APP_VERSION__: string;
+
 	namespace App {
 		interface Platform {
 			env: Env;
