@@ -1,11 +1,12 @@
 # SocialSent
 
 [![CI](https://github.com/deepakness/social-sent/actions/workflows/ci.yml/badge.svg)](https://github.com/deepakness/social-sent/actions/workflows/ci.yml)
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/deepakness/social-sent)
 
 Minimal social scheduler for Mastodon, Bluesky, LinkedIn, Threads, and X. SvelteKit on the Cloudflare stack (Workers, D1, R2).
 
 Write a draft, optionally customize per platform, then publish now or schedule. Bring your own credentials: single-tenant by design, with one admin account on your own Cloudflare account.
+
+Ready to run your own? [Deploy](#deploy) takes one command — or the Deploy to Cloudflare button, if you would rather not open a terminal.
 
 ## Stack
 
