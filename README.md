@@ -63,9 +63,10 @@ git clone --depth 1 --branch stable https://github.com/deepakness/social-sent.gi
 cd sent && npm install && npm run setup
 ```
 
-`stable` is a tagged release; use `main` when you want the newest commits, and
-see [Updating](#updating) for how to move between them. `npm run setup` is the
-same on any path: idempotent, safe to re-run, and it prints what it did.
+`stable` is the branch releases are cut from and what these docs are tested
+against; tags mark individual releases, and `main` is where new commits land
+first — see [Updating](#updating) for moving between them. `npm run setup` is
+the same on any path: idempotent, safe to re-run, and it prints what it did.
 
 It signs in through `wrangler login` (no API token to mint), creates the D1 database and R2 bucket if they are missing, generates `APP_ENCRYPTION_KEY`, writes it to `.dev.vars` and to the Worker, applies the migrations, deploys, and pins `APP_URL` to the URL it just deployed to — when the deploy prints one; otherwise it prints the command to set it yourself. (You can also skip that: an unset `APP_URL` follows the host each request arrives on.)
 
