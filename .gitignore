@@ -28,6 +28,10 @@ Thumbs.db
 wrangler.personal.jsonc
 wrangler.personal.json
 
+# Written for one deploy when Cloudflare refuses the cron trigger (the account
+# is at its trigger limit) and removed again right after. See scripts/wrangler.mjs.
+wrangler.no-cron.jsonc
+
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*

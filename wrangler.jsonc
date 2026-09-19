@@ -17,8 +17,11 @@
 	// triggers per account and documents `* * * * *`; each scheduled run gets
 	// the plan's CPU budget — the same one an HTTP tick gets — so a tick that
 	// runs out of budget leaves the rest due and the next one picks them up.
-	// Delete the entry and point an external pinger at /api/internal/tick
-	// instead if you would rather not use a trigger (README → Scheduling).
+	//
+	// An account that has used all five still deploys: scripts/wrangler.mjs
+	// retries once with `"crons": []`, prints why, and exits 0. To tick from
+	// somewhere else instead (Settings → Scheduled publishing hands out a token
+	// for /api/internal/tick), set `"crons": []` here yourself.
 	"triggers": { "crons": ["* * * * *"] },
 	//
 	// Optional: binding a queue makes the tick hand publishes to a consumer

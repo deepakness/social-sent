@@ -483,9 +483,10 @@ Next:
   3. Connect accounts (Accounts → Connect new).
   4. Scheduled posts publish themselves: the Worker's cron trigger runs every
      minute; AUTH_SECRET and SCHEDULER_SECRET are derived from APP_ENCRYPTION_KEY.
-     To drive the tick from somewhere else, set SCHEDULER_SECRET
-     (\`openssl rand -hex 32\`) and POST ${siteUrl || 'APP_URL'}/api/internal/tick with
-     it as the bearer — see README → Scheduling.
+     If the deploy above could not attach the trigger (an account can hold only
+     five on the free plan), Settings → Scheduled publishing has the tick URL and
+     a token for an external cron. Setting SCHEDULER_SECRET
+     (\`openssl rand -hex 32\`) works too — see README → Scheduling.
   5. Local dev uses the same secrets in ${DEV_VARS}; run \`npm run dev\`.`);
 	}
 }
