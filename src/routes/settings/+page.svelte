@@ -10,6 +10,7 @@
 	import { accountLabel, displayHandle, platformRank } from '$lib/domain/platforms';
 	import { isValidProfilePictureUrl, PROFILE_PICTURE_URL_MAX } from '$lib/domain/profile-settings';
 	import { INSTANCE_NAME_MAX } from '$lib/domain/instance-name';
+	import { tickAdvice, type TickAdvice } from '$lib/domain/scheduler-status';
 
 	let { data } = $props();
 	let msg = $state<string | null>(null);
@@ -57,6 +58,47 @@
 	let pictureBroken = $state(false);
 	let isPictureDialogOpen = $state(false);
 	let pictureDialogUrl = $state('');
+	// Scheduled publishing: what the last deploy did with the cron trigger, when
+	// the scheduler last ticked, and the token an external cron can use.
+	type TickHealth = {
+		ok: boolean;
+		lastTickAt: string | null;
+		neverTicked: boolean;
+		overdue: number;
+		stuckPublishing: number;
+		deployCron: { status: 'attached' | 'disabled' | 'unavailable'; code: string | null } | null;
+	};
+	let tickHealth = $state<TickHealth | null>(null);
+	type TickTokenMeta = { configured: boolean; prefix: string | null; createdAt: string | null };
+	let tickToken = $state<TickTokenMeta | null>(null);
+	let tickTokenRevealed = $state<string | null>(null);
+	let tickTokenCopied = $state(false);
+	let tickTokenBusy = $state(false);
+	let tickConfirm: 'rotate' | 'revoke' | null = $state(null);
+	let tickTestBusy = $state(false);
+	let tickTestMessage = $state<string | null>(null);
+	let tickOrigin = $state('');
+	const tickUrl = $derived(tickOrigin ? `${tickOrigin}/api/internal/tick` : '/api/internal/tick');
+	const tickStatusLine = $derived.by(() => {
+		const h = tickHealth;
+		if (!h) return 'Checking…';
+		if (h.stuckPublishing) {
+			return `${h.stuckPublishing} post${h.stuckPublishing === 1 ? '' : 's'} stuck publishing`;
+		}
+		const detail = h.overdue > 0 ? ` · ${h.overdue} post${h.overdue === 1 ? '' : 's'} due now` : '';
+		if (!h.lastTickAt) return `No tick yet${detail}`;
+		return `Last tick ${tickDate(h.lastTickAt)}${detail}`;
+	});
+	const tickState = $derived<TickAdvice>(
+		tickAdvice(
+			{
+				ok: tickHealth?.ok ?? false,
+				lastTickAt: tickHealth?.lastTickAt ? new Date(tickHealth.lastTickAt) : null,
+				stuckPublishing: tickHealth?.stuckPublishing ?? 0
+			},
+			tickHealth?.deployCron ? { ...tickHealth.deployCron, updatedAt: null } : null
+		)
+	);
 	// Set once the user has tried to save a bad URL, so the message appears on
 	// demand and then keeps up as they edit.
 	let pictureTouched = $state(false);
@@ -101,17 +143,18 @@
 		if (!keyLoaded) keyLoading = true;
 		err = null;
 		try {
-			const [totp, settings, conns, key, account, health] = await Promise.all([
+			const [totp, settings, conns, key, account, health, tick] = await Promise.all([
 				fetch('/api/auth/totp/status'),
 				fetch('/api/settings'),
 				fetch('/api/connections'),
 				fetch('/api/key'),
 				fetch('/api/account'),
-				fetch('/api/scheduler/health')
+				fetch('/api/scheduler/health'),
+				fetch('/api/scheduler/tick-token')
 			]);
 			// An expired session is not a broken setting: sign in again.
 			if (
-				[totp, settings, conns, key, account, health].some((res) =>
+				[totp, settings, conns, key, account, health, tick].some((res) =>
 					sessionExpiredIfUnauthorized(res)
 				)
 			) {
@@ -155,7 +198,16 @@
 			if (health.ok) {
 				const h = await health.json();
 				schedulerMessage = h.message ?? null;
+				tickHealth = {
+					ok: Boolean(h.ok),
+					lastTickAt: h.lastTickAt ?? null,
+					neverTicked: Boolean(h.neverTicked),
+					overdue: h.overdue ?? 0,
+					stuckPublishing: h.stuckPublishing ?? 0,
+					deployCron: h.deployCron ?? null
+				};
 			}
+			if (tick.ok) tickToken = await tick.json();
 			// A 5xx resolves rather than rejecting, so check the status too.
 			if (!settings.ok || !key.ok) err = 'Could not load your settings';
 		} catch {
@@ -459,7 +511,80 @@
 		return Number.isNaN(d.getTime()) ? 'never' : formatDistanceToNow(d, { addSuffix: true });
 	}
 
+	function tickDate(iso: string | null): string {
+		if (!iso) return 'never';
+		const d = new Date(iso);
+		return Number.isNaN(d.getTime()) ? 'never' : formatDistanceToNow(d, { addSuffix: true });
+	}
+
+	async function generateTickToken() {
+		tickTokenBusy = true;
+		err = null;
+		try {
+			const res = await fetch('/api/scheduler/tick-token', { method: 'POST' });
+			const payload = await res.json();
+			if (!res.ok) throw new Error(payload.error || 'Could not create a tick token');
+			tickTokenRevealed = payload.token;
+			tickTokenCopied = false;
+			tickConfirm = null;
+			await load();
+		} catch (e) {
+			err = humanizeError(e instanceof Error ? e.message : 'Could not create a tick token');
+		} finally {
+			tickTokenBusy = false;
+		}
+	}
+
+	async function revokeTickToken() {
+		tickTokenBusy = true;
+		err = null;
+		try {
+			const res = await fetch('/api/scheduler/tick-token', { method: 'DELETE' });
+			const payload = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(payload.error || 'Could not revoke the tick token');
+			tickConfirm = null;
+			tickTokenRevealed = null;
+			msg = 'Tick token revoked';
+			await load();
+		} catch (e) {
+			err = humanizeError(e instanceof Error ? e.message : 'Could not revoke the tick token');
+		} finally {
+			tickTokenBusy = false;
+		}
+	}
+
+	async function copyTickValue(value: string, which: 'token' | 'url') {
+		try {
+			await navigator.clipboard.writeText(value);
+			if (which === 'token') tickTokenCopied = true;
+			else msg = 'Tick URL copied';
+		} catch {
+			err = 'Copy failed — select the text manually';
+		}
+	}
+
+	async function testTick() {
+		tickTestBusy = true;
+		tickTestMessage = null;
+		err = null;
+		try {
+			const res = await fetch('/api/scheduler/test', { method: 'POST' });
+			const payload = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(payload.error || 'The tick failed');
+			tickTestMessage =
+				payload.processed === 0
+					? 'Tick ran: nothing was due.'
+					: `Tick ran: ${payload.processed} post${payload.processed === 1 ? '' : 's'} handled.`;
+			await load();
+		} catch (e) {
+			err = humanizeError(e instanceof Error ? e.message : 'The tick failed');
+		} finally {
+			tickTestBusy = false;
+		}
+	}
+
 	onMount(() => {
+		tickOrigin = window.location.origin;
 		void load();
 		try {
 			askPublish = localStorage.getItem(SKIP_ASK_KEY) !== '1';
@@ -998,6 +1123,175 @@
 
 		<div
 			class="rounded-[2rem] border border-stone-200/80 bg-white p-6 shadow-[0_8px_30px_-12px_rgb(28_25_23/0.06)] sm:p-8"
+			aria-label="Scheduled publishing"
+			data-testid="scheduler-section"
+		>
+			<h2 class="mb-2 text-[17px] font-extrabold tracking-tight text-stone-900">
+				Scheduled publishing
+			</h2>
+			<p class="mb-6 max-w-md text-[13px] leading-relaxed font-medium text-stone-500">
+				Posts whose time has come are published by a <em>tick</em>. The Worker's own cron trigger
+				does that every minute and needs nothing from you; an external cron — any service that can
+				send one POST per minute — does the same thing, which is useful when the account has no cron
+				trigger left (the free plan allows five per account).
+			</p>
+
+			<div
+				class="mb-5 flex flex-col justify-between gap-3 rounded-xl border border-stone-200/80 bg-stone-50/50 p-4 sm:flex-row sm:items-center"
+				data-testid="scheduler-status"
+			>
+				<div>
+					<p class="text-[13px] font-extrabold text-stone-900" data-testid="scheduler-status-line">
+						{tickStatusLine}
+					</p>
+					{#if schedulerMessage}
+						<p class="mt-1 text-[11px] font-medium text-stone-500">{schedulerMessage}</p>
+					{/if}
+				</div>
+				<button
+					type="button"
+					onclick={() => void testTick()}
+					disabled={tickTestBusy}
+					class="shrink-0 rounded-full bg-stone-100 px-5 py-2 text-[13px] font-bold text-stone-700 transition-all hover:bg-stone-200 disabled:opacity-50"
+				>
+					{tickTestBusy ? 'Ticking…' : 'Tick now'}
+				</button>
+			</div>
+			{#if tickTestMessage}
+				<p class="mb-5 text-[12px] font-medium text-emerald-700" role="status">{tickTestMessage}</p>
+			{/if}
+
+			{#if tickState.level !== 'ok'}
+				<div
+					class="mb-5 rounded-xl border p-4 text-[13px] leading-relaxed font-medium {tickState.level ===
+					'warn'
+						? 'border-amber-200/60 bg-amber-50/60 text-amber-900'
+						: 'border-stone-200/80 bg-stone-50/50 text-stone-600'}"
+					data-testid="scheduler-advice"
+				>
+					{tickState.message}
+				</div>
+			{/if}
+
+			{#if tickTokenRevealed}
+				<div class="space-y-4" data-testid="tick-token-reveal">
+					<div class="rounded-xl border border-amber-200/50 bg-amber-50/50 p-4">
+						<p class="text-[13px] font-bold text-amber-900">New tick token</p>
+						<p class="mt-1 text-[13px] font-medium text-amber-700">
+							Paste it into your cron service now: it is never shown again.
+						</p>
+					</div>
+					<code
+						class="block rounded-xl border border-stone-200/80 bg-stone-50 px-4 py-3 font-mono text-[13px] break-all text-stone-900 shadow-sm select-all"
+						data-testid="tick-token-value">{tickTokenRevealed}</code
+					>
+					<div class="flex flex-wrap items-center gap-2">
+						<button
+							type="button"
+							onclick={() => void copyTickValue(tickTokenRevealed ?? '', 'token')}
+							class="rounded-full bg-stone-900 px-6 py-2.5 text-[13px] font-bold text-white shadow-md transition-all hover:bg-stone-800"
+							>{tickTokenCopied ? 'Copied' : 'Copy token'}</button
+						>
+						<button
+							type="button"
+							onclick={() => {
+								tickTokenRevealed = null;
+								tickTokenCopied = false;
+							}}
+							class="rounded-full bg-stone-100 px-6 py-2.5 text-[13px] font-bold text-stone-700 transition-all hover:bg-stone-200"
+							>I have saved it</button
+						>
+					</div>
+				</div>
+			{:else}
+				<div
+					class="mb-5 rounded-xl border border-stone-200/80 bg-stone-50/50 p-4"
+					data-testid="tick-token-status"
+				>
+					{#if tickToken?.configured}
+						<p class="flex flex-wrap items-center gap-2 text-[13px] font-extrabold text-stone-900">
+							Tick token
+							<code
+								class="rounded bg-emerald-100/50 px-1.5 py-0.5 font-mono text-[12px] text-emerald-700"
+							>
+								{tickToken.prefix}…
+							</code>
+						</p>
+						<p class="mt-1 text-[11px] font-medium text-stone-500">
+							Created {keyDate(tickToken.createdAt)} · shown once when generated
+						</p>
+					{:else}
+						<p class="text-[13px] font-medium text-stone-500">
+							No tick token. Generate one to let an external cron publish scheduled posts.
+						</p>
+					{/if}
+				</div>
+				<div class="flex flex-wrap gap-2">
+					{#if tickToken?.configured}
+						<button
+							type="button"
+							onclick={() => (tickConfirm = 'rotate')}
+							disabled={tickTokenBusy}
+							class="rounded-full bg-stone-100 px-6 py-2.5 text-[13px] font-bold text-stone-700 transition-all hover:bg-stone-200 disabled:opacity-50"
+						>
+							Generate replacement
+						</button>
+						<button
+							type="button"
+							onclick={() => (tickConfirm = 'revoke')}
+							disabled={tickTokenBusy}
+							class="rounded-full bg-red-50 px-6 py-2.5 text-[13px] font-bold text-red-600 transition-all hover:bg-red-100 disabled:opacity-50"
+						>
+							Revoke
+						</button>
+					{:else}
+						<button
+							type="button"
+							onclick={() => (tickConfirm = 'rotate')}
+							disabled={tickTokenBusy}
+							class="rounded-full bg-stone-900 px-6 py-2.5 text-[13px] font-bold text-white shadow-md transition-all hover:bg-stone-800 disabled:opacity-50"
+							data-testid="tick-token-generate"
+						>
+							Generate tick token
+						</button>
+					{/if}
+				</div>
+			{/if}
+
+			<details class="mt-6">
+				<summary class="cursor-pointer text-[13px] font-bold text-stone-900">
+					How to call the tick from another service
+				</summary>
+				<div class="mt-3 space-y-3 text-[13px] leading-relaxed font-medium text-stone-600">
+					<p>Send a POST with the token as a bearer credential:</p>
+					<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+						<code
+							class="min-w-0 flex-1 rounded-xl border border-stone-200/80 bg-stone-50 px-4 py-2.5 font-mono text-[12px] break-all text-stone-900 select-all"
+							data-testid="tick-url">{tickUrl}</code
+						>
+						<button
+							type="button"
+							onclick={() => void copyTickValue(tickUrl, 'url')}
+							class="shrink-0 rounded-full bg-stone-100 px-5 py-2 text-[13px] font-bold text-stone-700 transition-all hover:bg-stone-200"
+						>
+							Copy URL
+						</button>
+					</div>
+					<pre
+						class="overflow-x-auto rounded-xl border border-stone-200/80 bg-stone-50 px-4 py-3 font-mono text-[12px] text-stone-900">curl -X POST {tickUrl} \
+  -H "Authorization: Bearer &lt;tick token&gt;"</pre>
+					<p>
+						In cron-job.org: create a job, method <strong>POST</strong>, schedule every minute, and
+						add the header <code>Authorization: Bearer &lt;tick token&gt;</code>. UptimeRobot's free
+						plan can do the same every five minutes; the repository also ships a GitHub Actions
+						workflow for it. Ticks are idempotent, so a slow or duplicated caller is harmless.
+					</p>
+				</div>
+			</details>
+		</div>
+
+		<div
+			class="rounded-[2rem] border border-stone-200/80 bg-white p-6 shadow-[0_8px_30px_-12px_rgb(28_25_23/0.06)] sm:p-8"
 		>
 			<h2 class="mb-2 text-[17px] font-extrabold tracking-tight text-stone-900">Instance</h2>
 			<p class="mb-6 max-w-md text-[13px] leading-relaxed font-medium text-stone-500">
@@ -1173,6 +1467,23 @@
 		</div>
 	{/snippet}
 </ConfirmDialog>
+
+<ConfirmDialog
+	open={tickConfirm !== null}
+	idPrefix="tick-token-dialog"
+	title={tickConfirm === 'revoke' ? 'Revoke tick token?' : 'New tick token?'}
+	body={tickConfirm === 'revoke'
+		? 'An external cron using the current token stops publishing immediately.'
+		: tickToken?.configured
+			? 'The current token stops working immediately. The new one is shown once.'
+			: 'The token is shown once. Copy it into your cron service before closing.'}
+	confirmLabel={tickConfirm === 'revoke' ? 'Revoke' : 'Generate'}
+	cancelLabel="Keep"
+	tone={tickConfirm === 'revoke' ? 'danger' : 'primary'}
+	busy={tickTokenBusy}
+	onConfirm={() => void (tickConfirm === 'revoke' ? revokeTickToken() : generateTickToken())}
+	onCancel={() => (tickConfirm = null)}
+/>
 
 <ConfirmDialog
 	open={keyConfirm !== null}

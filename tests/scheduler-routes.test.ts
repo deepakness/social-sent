@@ -151,9 +151,19 @@ describe('scheduler routes', () => {
 			locals: { db, user: sessionUser, authMethod: 'session' }
 		} as never)) as Response;
 		expect(ok.status).toBe(200);
-		const body = (await ok.json()) as { ok: boolean; message: string; overdue: number };
+		const body = (await ok.json()) as {
+			ok: boolean;
+			message: string;
+			overdue: number;
+			neverTicked: boolean;
+			lastTickAt: string | null;
+		};
 		expect(body.ok).toBe(true);
-		expect(body.message).toMatch(/scheduler/i);
+		// The heartbeat was just written, so this is the "ticks are arriving"
+		// wording; the idle/delayed wordings are covered in scheduler-status.test.ts.
+		expect(body.message).toBe('Scheduled publishing is on time');
+		expect(body.neverTicked).toBe(false);
+		expect(body.lastTickAt).not.toBe(null);
 
 		const anon = (await schedulerHealthGET({
 			locals: { db, user: null }

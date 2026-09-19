@@ -179,6 +179,43 @@ test('settings defaults persist', async () => {
 	await expect(page.getByLabel('Mastodon visibility')).toHaveValue('private');
 });
 
+test('scheduled publishing card explains the tick and mints a token', async () => {
+	await page.goto('/settings');
+	const section = page.getByTestId('scheduler-section');
+	await expect(section).toBeVisible();
+	// The status line is derived from the heartbeat; a fresh instance has none.
+	await expect(page.getByTestId('scheduler-status-line')).toContainText(/No tick yet|Last tick/);
+
+	// Generate, reveal once, then revoke: the token is a credential, so it must
+	// never come back from a later read.
+	await page.getByTestId('tick-token-generate').click();
+	// The confirmation dialog is the only "OK" on screen; the card's own buttons
+	// are matched by test id because "Generate" appears in several places.
+	await page.getByTestId('confirm-dialog-ok').click();
+	const revealed = page.getByTestId('tick-token-value');
+	await expect(revealed).toBeVisible();
+	const token = (await revealed.textContent())?.trim() ?? '';
+	expect(token.startsWith('tick_')).toBe(true);
+
+	const status = await page.request.get('/api/scheduler/tick-token').then((r) => r.json());
+	expect(status.configured).toBe(true);
+	expect(JSON.stringify(status)).not.toContain(token);
+
+	await page.getByRole('button', { name: 'I have saved it' }).click();
+	await expect(revealed).toBeHidden();
+	await page.getByTestId('scheduler-section').getByRole('button', { name: 'Revoke' }).click();
+	await page.getByTestId('confirm-dialog-ok').click();
+	await expect(page.getByTestId('tick-token-status')).toContainText('No tick token');
+});
+
+test('the tick runs on demand and reports back', async () => {
+	await page.goto('/settings');
+	await page.getByRole('button', { name: 'Tick now' }).click();
+	await expect(page.getByText(/^Tick ran:/)).toBeVisible();
+	// A heartbeat now exists, so the status line stops saying "No tick yet".
+	await expect(page.getByTestId('scheduler-status-line')).toContainText('Last tick');
+});
+
 test('profile save leaves unsaved new-post defaults alone', async () => {
 	await page.goto('/settings');
 	const before = await page.request.get('/api/settings').then((r) => r.json());

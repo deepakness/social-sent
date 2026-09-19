@@ -70,6 +70,8 @@ export interface SchedulerHealth {
 	stuckPublishing: number;
 	/** Due but unprocessed targets (normal when the cron is delayed). */
 	overdue: number;
+	/** When the scheduler last ran, or null when it has never run. */
+	lastTickAt: Date | null;
 }
 
 export async function schedulerHealth(db: AppDb, now = new Date()): Promise<SchedulerHealth> {
@@ -99,17 +101,22 @@ export async function schedulerHealth(db: AppDb, now = new Date()): Promise<Sche
 	const stuckPublishing = stuckRows.length;
 	const overdue = overdueRows.length;
 	const row = rows[0];
-	if (!row) return { ok: false, error: 'No heartbeat yet', stuckPublishing, overdue };
+	// `lastTickAt` stays null until the first tick ever. That difference matters
+	// to the UI: a fresh instance whose cron was never attached has nothing to
+	// wait for, while a long-silent one has a trigger or a pinger to look at.
+	if (!row)
+		return { ok: false, error: 'No heartbeat yet', lastTickAt: null, stuckPublishing, overdue };
 	const age = now.getTime() - row.lastOkAt.getTime();
 	if (age > HEARTBEAT_STALE_MS) {
 		return {
 			ok: false,
 			error: `Last tick ${Math.round(age / 1000)}s ago`,
+			lastTickAt: row.lastOkAt,
 			stuckPublishing,
 			overdue
 		};
 	}
-	return { ok: true as const, stuckPublishing, overdue };
+	return { ok: true as const, lastTickAt: row.lastOkAt, stuckPublishing, overdue };
 }
 
 export async function expireOauthPending(db: AppDb, now = new Date()) {

@@ -56,6 +56,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		draftCount: draftRow?.n ?? 0,
 		failedCount: failedRow?.n ?? 0,
 		schedulerOk: health.ok,
+		schedulerNeverTicked: health.lastTickAt === null,
 		schedulerError: health.error ?? null,
 		stuckPublishing: health.stuckPublishing,
 		overdue: health.overdue

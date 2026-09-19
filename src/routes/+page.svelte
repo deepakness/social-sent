@@ -27,7 +27,15 @@
 			};
 		}
 		if (!data.schedulerOk) {
-			return { tone: 'warn' as const, label: 'Scheduler delayed' };
+			// "Never ticked" is a different problem from "stopped ticking": nothing
+			// has published a scheduled post yet, usually because the account had
+			// no cron trigger left and nothing else calls the tick.
+			return {
+				tone: 'warn' as const,
+				label: data.schedulerNeverTicked
+					? 'Scheduled posts are not published yet'
+					: 'Scheduler delayed'
+			};
 		}
 		return { tone: 'ok' as const, label: 'All systems operational' };
 	});

@@ -29,6 +29,7 @@ import { runSchedulerTick } from '$lib/server/scheduler';
 import { securityHeadersFor } from '$lib/server/security-headers';
 import { isPinnedAppUrl } from '$lib/domain/app-url';
 import { readStoredAppUrl, rememberAppUrl } from '$lib/server/app-settings';
+import { verifyTickToken } from '$lib/server/tick-token';
 
 export function isPublicPath(path: string): boolean {
 	if (path === '/login' || path === '/login/setup-2fa' || path === '/login/verify') return true;
@@ -243,11 +244,16 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	// Scheduler bypass: SCHEDULER_SECRET (preferred) or API_TOKEN. AUTH_SECRET
 	// signs sessions/challenges and must never be accepted on the wire here.
-	if (
-		isInternalApiPath(path) &&
-		anySecretMatches(bearer, [appEnv.SCHEDULER_SECRET, appEnv.API_TOKEN])
-	) {
-		return withPageSecurity(path, await resolve(event), secureRequest);
+	//
+	// The tick also accepts the token minted in Settings, which exists so an
+	// external cron needs no env secret at all. It is deliberately narrower
+	// than the env secrets: only /api/internal/tick, never /api/internal/publish.
+	if (isInternalApiPath(path)) {
+		const tickPath = path === '/api/internal/tick' || path === '/api/internal/tick/';
+		const authorized =
+			anySecretMatches(bearer, [appEnv.SCHEDULER_SECRET, appEnv.API_TOKEN]) ||
+			(tickPath && (await verifyTickToken(db, bearer)));
+		if (authorized) return withPageSecurity(path, await resolve(event), secureRequest);
 	}
 
 	// Dev convenience: SKIP_TOTP (honored for localhost APP_URLs only) treats

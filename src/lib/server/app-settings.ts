@@ -13,11 +13,21 @@
  * outlive the binding it came from (tests, hot reloads).
  */
 import { eq } from 'drizzle-orm';
+import {
+	parseDeployCronState,
+	type DeployCronState,
+	type DeployCronStatus
+} from '$lib/domain/deploy-cron';
 import { first, type AppDb } from './db/client';
 import { appSettings } from './db/schema';
 
 export const APP_URL_SETTING = 'app_url';
 export const APP_NAME_SETTING = 'app_name';
+/** What the last deploy did with the cron trigger. Written by
+ *  `scripts/wrangler.mjs` (scripts/lib/wrangler-config.mjs), read here. */
+export const CRON_STATE_SETTING = 'cron_state';
+
+export type { DeployCronState, DeployCronStatus };
 
 type CacheKey = object;
 
@@ -41,7 +51,7 @@ function memoFor(db: AppDb): Map<string, string | null> | null {
 }
 
 /** A stored value, or null when it is missing or blank. */
-async function readSetting(db: AppDb, key: string): Promise<string | null> {
+export async function readAppSetting(db: AppDb, key: string): Promise<string | null> {
 	const memo = memoFor(db);
 	const cached = memo?.get(key);
 	if (cached !== undefined) return cached;
@@ -58,7 +68,7 @@ async function readSetting(db: AppDb, key: string): Promise<string | null> {
 }
 
 /** Store a value, or clear it when blank. Best effort. */
-async function writeSetting(db: AppDb, key: string, value: string): Promise<void> {
+export async function writeAppSetting(db: AppDb, key: string, value: string): Promise<void> {
 	const stored = value.trim();
 	const memo = memoFor(db);
 	if (memo?.get(key) === (stored || null)) return;
@@ -79,21 +89,41 @@ async function writeSetting(db: AppDb, key: string, value: string): Promise<void
 
 /** The remembered origin, or null when nothing has been recorded yet. */
 export function readStoredAppUrl(db: AppDb): Promise<string | null> {
-	return readSetting(db, APP_URL_SETTING);
+	return readAppSetting(db, APP_URL_SETTING);
 }
 
 /** Record the origin the instance is actually served from. */
 export function rememberAppUrl(db: AppDb, url: string): Promise<void> {
 	if (!url) return Promise.resolve();
-	return writeSetting(db, APP_URL_SETTING, url);
+	return writeAppSetting(db, APP_URL_SETTING, url);
 }
 
 /** The instance name set in Settings → Instance, or null for the default. */
 export function readStoredAppName(db: AppDb): Promise<string | null> {
-	return readSetting(db, APP_NAME_SETTING);
+	return readAppSetting(db, APP_NAME_SETTING);
 }
 
 /** Store the instance name; a blank value falls back to the default. */
 export function rememberAppName(db: AppDb, name: string): Promise<void> {
-	return writeSetting(db, APP_NAME_SETTING, name);
+	return writeAppSetting(db, APP_NAME_SETTING, name);
+}
+
+/**
+ * What the last deploy recorded about the cron trigger.
+ *
+ * Deliberately uncached and never throwing: it is diagnostic text for the
+ * Settings page and `npm run doctor`, and a database that predates the table
+ * (or the feature) simply has nothing to say.
+ */
+export async function readDeployCronState(db: AppDb): Promise<DeployCronState | null> {
+	try {
+		const row = await first(
+			db.select().from(appSettings).where(eq(appSettings.key, CRON_STATE_SETTING))
+		);
+		const parsed = parseDeployCronState(row?.value);
+		if (!parsed) return null;
+		return { ...parsed, updatedAt: row?.updatedAt ?? null };
+	} catch {
+		return null;
+	}
 }
