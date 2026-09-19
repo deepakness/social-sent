@@ -125,13 +125,18 @@ export function evaluateConfig(config, { configFile, devVars } = {}) {
 	const crons = config?.triggers?.crons ?? [];
 	checks.push(
 		crons.length > 0
-			? { id: 'cron', status: 'ok', label: `Cron trigger: ${crons.join(', ')}` }
+			? {
+					id: 'cron',
+					status: 'ok',
+					label: `Cron trigger: ${crons.join(', ')}`,
+					detail: 'one of the five per account the Workers free plan allows'
+				}
 			: {
 					id: 'cron',
 					status: 'warn',
 					label: 'No cron trigger configured',
 					detail: 'scheduled posts will not fire by themselves',
-					fix: 'Add "triggers": { "crons": ["* * * * *"] }, or run an external pinger'
+					fix: 'Add "triggers": { "crons": ["* * * * *"] }, or point an external cron at POST /api/internal/tick using the token from Settings -> Scheduled publishing'
 				}
 	);
 
@@ -226,6 +231,84 @@ export function healthVerdict(status, body = '') {
 		status: 'warn',
 		label: `Deployment answered HTTP ${status}`,
 		detail: body.replace(/\s+/g, ' ').trim().slice(0, 120) || undefined
+	};
+}
+
+/**
+ * What a `/api/scheduler/health` response means.
+ *
+ * The app cannot read its own cron schedule, so this is inference plus the note
+ * the last deploy left in D1: a deployment whose trigger was refused (error
+ * 10072) is the one case worth failing the run over, because scheduled posts
+ * will silently wait for a tick that never comes.
+ */
+/** @param {number} status @param {any} body @returns {Check} */
+export function schedulerVerdict(status, body = {}) {
+	if (status === 401 || status === 403) {
+		return {
+			id: 'scheduler',
+			status: 'warn',
+			label: `Scheduler probe rejected (HTTP ${status})`,
+			fix: 'API_TOKEN in .dev.vars must match the Worker secret of the same name'
+		};
+	}
+	if (status !== 200) {
+		return {
+			id: 'scheduler',
+			status: 'skip',
+			label: `Scheduler check skipped (HTTP ${status})`
+		};
+	}
+	const deploy = body?.deployCron ?? null;
+	const lastTick = body?.lastTickAt ? new Date(body.lastTickAt) : null;
+	if (body?.ok) {
+		return {
+			id: 'scheduler',
+			status: 'ok',
+			label: 'Scheduler ticks are arriving',
+			detail:
+				lastTick && !Number.isNaN(lastTick.getTime())
+					? `last tick ${lastTick.toISOString()}`
+					: undefined
+		};
+	}
+	if (deploy?.status === 'unavailable') {
+		return {
+			id: 'scheduler',
+			status: 'fail',
+			label: `No cron trigger on the Worker${deploy.code ? ` (Cloudflare error ${deploy.code})` : ''}`,
+			detail:
+				'the last deploy was refused a schedule: the account is at its cron-trigger limit, so scheduled posts are not being published',
+			fix: 'Free a trigger slot (another Worker -> Settings -> Trigger events), upgrade to Workers Paid, or point an external cron at POST /api/internal/tick with the token from Settings -> Scheduled publishing'
+		};
+	}
+	if (deploy?.status === 'disabled') {
+		return {
+			id: 'scheduler',
+			status: 'warn',
+			label: 'No cron trigger is configured',
+			detail: 'scheduled posts only publish when something calls the tick',
+			fix: 'Add "triggers": { "crons": ["* * * * *"] } to the config, or use an external cron with the token from Settings -> Scheduled publishing'
+		};
+	}
+	if (body?.neverTicked) {
+		return {
+			id: 'scheduler',
+			status: 'warn',
+			label: 'No tick has arrived yet',
+			detail: 'nothing has published a scheduled post on this deployment',
+			fix: 'Check the Worker cron trigger (Settings -> Trigger events), or use an external cron with the token from Settings -> Scheduled publishing'
+		};
+	}
+	return {
+		id: 'scheduler',
+		status: 'warn',
+		label: 'The scheduler has gone quiet',
+		detail:
+			lastTick && !Number.isNaN(lastTick.getTime())
+				? `last tick ${lastTick.toISOString()}`
+				: undefined,
+		fix: 'Check the Worker cron trigger (Settings -> Trigger events), or point an external cron at POST /api/internal/tick'
 	};
 }
 
@@ -514,16 +597,7 @@ async function main() {
 					signal: AbortSignal.timeout(10_000)
 				});
 				const body = await res.json().catch(() => ({}));
-				checks.push(
-					res.ok && body.ok
-						? { id: 'scheduler', status: 'ok', label: `Scheduler: ${body.message ?? 'reachable'}` }
-						: {
-								id: 'scheduler',
-								status: 'warn',
-								label: `Scheduler: ${body.message ?? `HTTP ${res.status}`}`,
-								fix: 'Check the cron trigger (Workers → Triggers) or your pinger'
-							}
-				);
+				checks.push(schedulerVerdict(res.status, body));
 			} catch {
 				checks.push({ id: 'scheduler', status: 'skip', label: 'Scheduler check skipped' });
 			}

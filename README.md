@@ -59,6 +59,9 @@ and [DEPLOY.md](DEPLOY.md) has the troubleshooting.
 2. **[Step by step](#step-by-step)** — the same result, every command visible.
 3. **[Deploy to Cloudflare button](#deploy-to-cloudflare-button)** — no terminal.
 
+Either path survives a full cron-trigger quota: the deploy falls back to a
+trigger-less Worker, says so, and the app shows how to tick from outside.
+
 ### One command
 
 ```sh
@@ -133,7 +136,9 @@ GitHub App nor Workers Builds.
 
 ### Scheduling
 
-Scheduled posts save to D1 and are published by a per-minute cron trigger, which `wrangler.jsonc` ships enabled (`"triggers"`). The handler is a no-op when there is nothing to authenticate the tick with, so an instance without either secret simply does not publish on a schedule. The Workers free plan allows five cron triggers per account; each run gets the plan's CPU budget, the same one an HTTP tick gets, so a tick that runs out of budget leaves the rest due for the next minute.
+Scheduled posts save to D1 and are published by a per-minute cron trigger, which `wrangler.jsonc` ships enabled (`"triggers"`). A tick that runs out of the plan's CPU budget leaves the rest due for the next minute.
+
+**Pick your tick.** The built-in cron needs nothing from you, but the Workers free plan allows only **five cron triggers per account** — and those are shared with every other Worker you run. If your account has none left, `npm run deploy` says so, retries without the trigger, and still ships the app; scheduled posts then wait until something calls the tick endpoint. **Settings → Scheduled publishing** covers both paths: it shows whether ticks are arriving, and can generate a token for an external cron (cron-job.org, UptimeRobot, the bundled GitHub Actions workflow). The token only works for the tick endpoint, unlike `SCHEDULER_SECRET`.
 
 To drive the tick from something else instead — cron-job.org, a Raspberry Pi, a systemd timer, the bundled GitHub Actions workflow, a different cadence on a paid plan — POST to:
 
@@ -145,13 +150,13 @@ curl -X POST "$APP_URL/api/internal/tick" \
 
 Both headers matter: the endpoint takes `SCHEDULER_SECRET` (`API_TOKEN` still works as a fallback; `AUTH_SECRET` never does — it signs sessions and is rejected on the wire), and `Content-Type: application/json` is required because SvelteKit's built-in CSRF guard rejects form-encoded POSTs without an `Origin` header (403) before app code ever runs. Clients that default to a form content type must override it.
 
-An external caller needs a bearer it can read, and the derived one is not readable from outside, so set `SCHEDULER_SECRET` (`openssl rand -hex 32`) when you add a pinger. It then lives in two places — the Worker secret and the pinger's config — so rotate both together. Without it (and without `API_TOKEN`) an external caller cannot authenticate at all; the built-in cron keeps working either way, because the Worker derives the same value. The bundled GitHub workflow stays off until you set repository secrets `APP_URL` and `SCHEDULER_SECRET`; with the built-in cron running, treat it as a backup rather than the primary tick. It is scheduled every five minutes (GitHub's shortest interval) but GitHub throttles it to roughly one run every two hours. Queue treats a heartbeat older than 6 hours as delayed. You can also run it manually from **Actions → Scheduler tick → Run workflow**.
+An external caller needs a bearer it can read. Easiest is the token from **Settings → Scheduled publishing**, which needs no redeploy and cannot reach anything except the tick. The alternative is `SCHEDULER_SECRET` (`openssl rand -hex 32`), which then lives in two places — the Worker secret and the pinger's config — so rotate both together. Without it (and without `API_TOKEN`) an external caller cannot authenticate at all; the built-in cron keeps working either way, because the Worker derives the same value. The bundled GitHub workflow stays off until you set repository secrets `APP_URL` and `SCHEDULER_SECRET`; with the built-in cron running, treat it as a backup rather than the primary tick. It is scheduled every five minutes (GitHub's shortest interval) but GitHub throttles it to roughly one run every two hours. Queue treats a heartbeat older than 6 hours as delayed. You can also run it manually from **Actions → Scheduler tick → Run workflow**.
 
 A tick publishes as many due targets as it can inside D1's per-invocation statement budget (50 on the free plan, which is roughly three or four posts), then stops and leaves the rest due — the next tick picks them up. A backlog therefore drains a few posts per tick rather than all at once, and nothing is lost if a tick dies half-way.
 
 Ticks are idempotent, so an extra caller is safe rather than harmful — but there is no reason to run a per-minute pinger alongside the cron. Keep one primary tick and, at most, the throttled GitHub backup.
 
-To change the cadence, edit `triggers.crons` in `wrangler.jsonc` (`*/5 * * * *` and friends are fine on the free plan too). To use no trigger at all, delete the `triggers` block and point a pinger at the endpoint instead.
+To change the cadence, edit `triggers.crons` in `wrangler.jsonc` (`*/5 * * * *` and friends are fine on the free plan too). To use no trigger at all, set `"crons": []` and point a pinger at the endpoint instead — `npm run doctor -- --app-url <url>` confirms which of the two is actually running.
 
 ### Failure alerts (optional)
 

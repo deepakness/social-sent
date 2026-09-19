@@ -11,6 +11,7 @@ import {
 	parseD1List,
 	parseSecretNames,
 	readDevVars,
+	schedulerVerdict,
 	summarize
 } from '../scripts/doctor.mjs';
 
@@ -117,6 +118,70 @@ describe('health verdict', () => {
 
 	it('warns on anything else without pretending to know why', () => {
 		expect(healthVerdict(502, '<html>gateway</html>')).toMatchObject({ status: 'warn' });
+	});
+});
+
+describe('scheduler verdict', () => {
+	const health = (over: Record<string, unknown> = {}) => ({
+		ok: true,
+		lastTickAt: '2026-09-17T06:40:00.000Z',
+		neverTicked: false,
+		message: 'Scheduled publishing is on time',
+		deployCron: { status: 'attached', code: null, updatedAt: '2026-09-17T06:30:00.000Z' },
+		...over
+	});
+
+	it('passes when ticks arrive', () => {
+		const check = schedulerVerdict(200, health());
+		expect(check.status).toBe('ok');
+		expect(check.detail).toContain('2026-09-17');
+	});
+
+	it('fails when the deploy could not attach the trigger', () => {
+		// The one case worth a non-zero exit: scheduled posts silently wait.
+		const check = schedulerVerdict(
+			200,
+			health({
+				ok: false,
+				lastTickAt: null,
+				neverTicked: true,
+				deployCron: { status: 'unavailable', code: '10072', updatedAt: null }
+			})
+		);
+		expect(check.status).toBe('fail');
+		expect(check.label).toContain('10072');
+		expect(check.fix).toContain('Settings');
+	});
+
+	it('warns when no trigger is configured, or nothing has ticked yet', () => {
+		expect(
+			schedulerVerdict(
+				200,
+				health({
+					ok: false,
+					lastTickAt: null,
+					neverTicked: true,
+					deployCron: { status: 'disabled', code: null, updatedAt: null }
+				})
+			).status
+		).toBe('warn');
+		expect(
+			schedulerVerdict(
+				200,
+				health({ ok: false, lastTickAt: null, neverTicked: true, deployCron: null })
+			).label
+		).toContain('No tick');
+	});
+
+	it('warns when the scheduler went quiet after ticking', () => {
+		const check = schedulerVerdict(200, health({ ok: false }));
+		expect(check.status).toBe('warn');
+		expect(check.detail).toContain('2026-09-17');
+	});
+
+	it('explains a rejected probe instead of guessing', () => {
+		expect(schedulerVerdict(401, {}).fix).toContain('API_TOKEN');
+		expect(schedulerVerdict(500, {}).status).toBe('skip');
 	});
 });
 

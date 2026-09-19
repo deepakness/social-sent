@@ -67,8 +67,9 @@ are missing, so forks stay quiet.
    Threads and X need an OAuth app each, with the redirect URI built from your
    deployed URL (README → _OAuth app setup_).
 3. Scheduled posts publish themselves through the cron trigger in
-   `wrangler.jsonc`. Nothing to set up unless you want an external pinger, in
-   which case set `SCHEDULER_SECRET` and keep both copies in sync.
+   `wrangler.jsonc`. Nothing to set up — unless the account had no trigger slot
+   left, in which case the deploy says so and **Settings → Scheduled publishing**
+   has the tick URL and a token for an external cron.
 4. Optional: `RESEND_API_KEY` + `NOTIFY_EMAIL` for failure digests, and the
    instance name under **Settings → Instance**.
 
@@ -82,7 +83,8 @@ npm run doctor -- --app-url https://your-worker.workers.dev
 Read-only: it verifies your login, that the D1 database and R2 bucket exist,
 that `APP_ENCRYPTION_KEY` is set, whether migrations are pending, whether the
 Worker has a deployment, and — with `--app-url` — that the app answers
-`/api/health` and the scheduler is alive. Every failure prints the exact command
+`/api/health` and whether the scheduler is actually ticking (and why not, when
+it is not). Every failure prints the exact command
 that fixes it. It never changes anything.
 
 ## Troubleshooting
@@ -152,6 +154,52 @@ depends on it) or set `bucket_name` in `wrangler.personal.jsonc` before
 deploying. R2 also refuses to create anything until the account has a payment
 method on file, even for free-tier usage.
 
+### The deploy complains about cron triggers (10072)
+
+```
+✘ [ERROR] Trigger configuration for "…" was only partially updated:
+    - This account has reached the Workers Free limit of 5 cron triggers per account … [code: 10072]
+Failed: error occurred while running deploy command
+```
+
+The Worker and its assets were uploaded — only the schedule was refused. This is
+an **account** limit, not a per-Worker one: five cron triggers in total on the
+free plan, across every Worker you run, and a fresh project cannot get a sixth
+slot.
+
+`npm run deploy` handles this for you: it retries once with the trigger removed
+(`"crons": []`) and exits 0, printing the same explanation, so the build is not
+marked failed and the app is live. Publishing now works; only scheduled posts
+need a tick. Set `SOCIALSENT_STRICT_CRON=1` to get the plain failure instead.
+
+Pick one of these:
+
+1. **Free a slot.** Cloudflare → **Workers & Pages** → the _other_ Worker →
+   **Settings → Trigger events → Cron triggers** → delete a schedule you no
+   longer need.
+2. **Upgrade** the account to Workers Paid (hundreds of triggers).
+3. **Use an external cron** and leave the Worker without a trigger. Settings →
+   **Scheduled publishing** shows the tick URL and can generate a token; paste
+   both into any cron service:
+
+   ```sh
+   curl -X POST https://your-worker.workers.dev/api/internal/tick \
+     -H "Authorization: Bearer <tick token>"
+   ```
+
+   cron-job.org runs a job once a minute on its free plan, UptimeRobot's free
+   plan every five minutes, and the repository ships a GitHub Actions workflow
+   (`.github/workflows/scheduler-tick.yml`) that needs repository secrets
+   `APP_URL` and `SCHEDULER_SECRET`. Ticks are idempotent, so a duplicated or
+   delayed caller is harmless. To go trigger-less by choice, delete the
+   `triggers` block from your config (or set `"crons": []`).
+
+   Using the env secret instead of the generated token works too: set
+   `SCHEDULER_SECRET` and keep the Worker secret and the caller in sync.
+
+`npm run doctor -- --app-url https://your-worker.workers.dev` reports which of
+these you are in: ticks arriving, no trigger configured, or a refused trigger.
+
 ### The app answers 503: "must not be an example value"
 
 The deployment is running on the example secrets from `.dev.vars.example`. Set
@@ -179,11 +227,16 @@ address, update or delete that secret so the new hostname is used.
 
 ### Scheduled posts never fire
 
-Check the Worker's **Settings → Triggers** for the `* * * * *` cron, then look at
-the dashboard in the app — it shows the last scheduler heartbeat. The tick needs
-`SCHEDULER_SECRET` (or `API_TOKEN`) to authenticate when it is called from
-outside; the built-in cron derives its own credential from
-`APP_ENCRYPTION_KEY`. Read-only check:
+Open **Settings → Scheduled publishing** in the app: it says whether a tick has
+ever arrived, why one is missing when the last deploy could not attach the
+trigger, and offers both a token and a "Tick now" button.
+
+Behind it: the tick runs every minute from the cron trigger in `wrangler.jsonc`
+(Cloudflare → **Settings → Trigger events**), or from an external cron calling
+`POST /api/internal/tick` with a bearer credential. The built-in cron derives
+its own credential from `APP_ENCRYPTION_KEY`; external callers use the token
+from that Settings card, or the env `SCHEDULER_SECRET` / `API_TOKEN`. Read-only
+check:
 
 ```sh
 npm run doctor -- --app-url <url>   # reports the scheduler line
